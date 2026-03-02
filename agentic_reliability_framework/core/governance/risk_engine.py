@@ -275,7 +275,7 @@ class HMCModel:
         hour = datetime.datetime.now().hour
         sin_hour = np.sin(2 * np.pi * hour / 24)
         cos_hour = np.cos(2 * np.pi * hour / 24)
-        env_prod = 1.0 if hasattr(intent, "environment") and intent.environment == Environment.PROD else 0.0
+        env_prod = 1.0 if hasattr(intent, "environment") and intent.environment == "prod" else 0.0
         user_role = 0.0  # placeholder
 
         cat = self._categorize_intent(intent)
@@ -523,7 +523,7 @@ class RiskEngine:
     def _context_multiplier(self, intent: InfrastructureIntent) -> float:
         """Compute multiplier based on environment, user role, time, etc."""
         mult = 1.0
-        if hasattr(intent, "environment") and intent.environment == Environment.PROD:
+        if hasattr(intent, "environment") and intent.environment == "prod":  # <-- FIXED
             mult *= 1.5
         return mult
 
