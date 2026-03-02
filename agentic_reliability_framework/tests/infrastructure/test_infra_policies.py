@@ -95,8 +95,6 @@ def test_allow_all_policy():
         resource_type=ResourceType.VM,
         region="eastus",
         size="Standard_D2s_v3",
-        region="eastus",                 # valid region
-        size="Standard_D2s_v3",           # valid size
         requester="alice",
         environment="prod"
     )
