@@ -22,7 +22,7 @@ def test_simulator_approve_low_risk():
         region="eastus",
         size="Standard_D2s_v3",
         requester="alice",
-        environment="dev"  # was Environment.DEV
+        environment="dev"
     )
     result = simulator.evaluate(intent)
     assert result.recommended_action == RecommendedAction.APPROVE
@@ -73,9 +73,14 @@ def test_simulator_escalate_medium_risk():
         requester="alice"
     )
     result = simulator.evaluate(intent)
+<<<<<<< HEAD
     # medium security risk currently falls below escalation threshold
     assert result.recommended_action == RecommendedAction.APPROVE
     # Security prior mean = 0.1667
+=======
+    # Risk score for WRITE permission is 0.1667 (below 0.4) -> APPROVE
+    assert result.recommended_action == RecommendedAction.APPROVE
+>>>>>>> adf837024fd6d06c8d3dd61a120b662cc49a2c77
     assert 0.1 < result.risk_score < 0.3
 
 def test_cost_projection_present_in_healing_intent():

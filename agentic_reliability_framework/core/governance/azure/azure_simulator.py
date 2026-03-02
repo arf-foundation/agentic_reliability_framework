@@ -22,6 +22,7 @@ from agentic_reliability_framework.core.governance.healing_intent import (
     HealingIntent,
     RecommendedAction,
     IntentSource,
+    create_infrastructure_healing_intent,  # <-- Use factory
 )
 from agentic_reliability_framework.core.config.constants import MAX_POLICY_VIOLATIONS
 
@@ -54,7 +55,6 @@ class AzureInfrastructureSimulator:
         """
         self._policy_evaluator = PolicyEvaluator(policy)
         self._cost_estimator = CostEstimator(pricing_file)
-        # Bayesian risk engine does not require factors
         self._risk_engine = RiskEngine()
 
     def evaluate(self, intent: InfrastructureIntent) -> HealingIntent:
@@ -83,7 +83,6 @@ class AzureInfrastructureSimulator:
         )
 
         # 4. Determine recommended action
-        #    This is a decision rule; can be made configurable.
         if risk_score > 0.8 or violations:
             recommended_action = RecommendedAction.DENY
         elif risk_score > 0.4:
@@ -100,10 +99,7 @@ class AzureInfrastructureSimulator:
         justification_parts.append(explanation)
         justification = " ".join(justification_parts)
 
-        # 6. Create summary
-        intent_summary = f"{intent.intent_type} requested by {intent.requester}"
-
-        # 7. Package evaluation details
+        # 6. Package evaluation details
         details = {
             "cost_estimate": cost,
             "violations": violations,
@@ -111,6 +107,7 @@ class AzureInfrastructureSimulator:
             "factor_contributions": contributions,
         }
 
+<<<<<<< HEAD
         # 8. Create the HealingIntent via the factory helper and then mark as OSS advisory
         healing_intent = HealingIntent.from_infrastructure_intent(
             infrastructure_intent=intent,
@@ -126,6 +123,26 @@ class AzureInfrastructureSimulator:
             recommended_action=recommended_action,
             source=IntentSource.INFRASTRUCTURE_ANALYSIS,
         )
+=======
+        # 7. Create a mock result object for the factory function
+        class MockInfrastructureResult:
+            def __init__(self):
+                self.recommended_action = recommended_action
+                self.intent_id = intent.intent_id
+                self.risk_score = risk_score
+                self.cost_projection = cost
+                self.policy_violations = violations
+                self.justification = justification
+                self.confidence_score = 0.9
+                self.evaluation_details = details
+                self.infrastructure_intent = intent
+>>>>>>> adf837024fd6d06c8d3dd61a120b662cc49a2c77
 
-        # Mark as OSS advisory (sets status=OSS_ADVISORY_ONLY and execution_allowed=False)
-        return healing_intent.mark_as_oss_advisory()
+        result = MockInfrastructureResult()
+
+        # 8. Create the HealingIntent via factory (handles OSS advisory marking)
+        healing_intent = create_infrastructure_healing_intent(
+            infrastructure_result=result,
+            action_mapping=None
+        )
+        return healing_intent
