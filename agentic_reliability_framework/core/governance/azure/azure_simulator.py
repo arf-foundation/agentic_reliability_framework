@@ -22,7 +22,7 @@ from agentic_reliability_framework.core.governance.healing_intent import (
     HealingIntent,
     RecommendedAction,
     IntentSource,
-    create_infrastructure_healing_intent,  # <-- Use factory
+    create_infrastructure_healing_intent,
 )
 from agentic_reliability_framework.core.config.constants import MAX_POLICY_VIOLATIONS
 
