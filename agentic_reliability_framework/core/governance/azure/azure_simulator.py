@@ -22,7 +22,7 @@ from agentic_reliability_framework.core.governance.healing_intent import (
     HealingIntent,
     RecommendedAction,
     IntentSource,
-    create_infrastructure_healing_intent,  # <-- NEW import
+    create_infrastructure_healing_intent,  # <-- Use factory
 )
 from agentic_reliability_framework.core.config.constants import MAX_POLICY_VIOLATIONS
 
@@ -99,24 +99,32 @@ class AzureInfrastructureSimulator:
         justification_parts.append(explanation)
         justification = " ".join(justification_parts)
 
-        # 6. Use factory function to create the HealingIntent (handles OSS advisory)
+        # 6. Package evaluation details
+        details = {
+            "cost_estimate": cost,
+            "violations": violations,
+            "risk_score": risk_score,
+            "factor_contributions": contributions,
+        }
+
+        # 7. Create a mock result object for the factory function
+        class MockInfrastructureResult:
+            def __init__(self):
+                self.recommended_action = recommended_action
+                self.intent_id = intent.intent_id
+                self.risk_score = risk_score
+                self.cost_projection = cost
+                self.policy_violations = violations
+                self.justification = justification
+                self.confidence_score = 0.9
+                self.evaluation_details = details
+                self.infrastructure_intent = intent
+
+        result = MockInfrastructureResult()
+
+        # 8. Create the HealingIntent via factory (handles OSS advisory marking)
         healing_intent = create_infrastructure_healing_intent(
-            infrastructure_result=type('obj', (object,), {   # mock object to hold fields
-                'recommended_action': recommended_action,
-                'intent_id': intent.intent_id,
-                'risk_score': risk_score,
-                'cost_projection': cost,
-                'policy_violations': violations,
-                'justification': justification,
-                'confidence_score': 0.9,
-                'evaluation_details': {
-                    "cost_estimate": cost,
-                    "violations": violations,
-                    "risk_score": risk_score,
-                    "factor_contributions": contributions,
-                },
-                'infrastructure_intent': intent,
-            }),
+            infrastructure_result=result,
             action_mapping=None
         )
         return healing_intent
