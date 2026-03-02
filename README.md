@@ -1,21 +1,34 @@
-# Agentic Reliability Framework (ARF) – OSS Edition
+# Agentic Reliability Framework (ARF) – OSS Edition v4
 
 [![PyPI](https://img.shields.io/pypi/v/agentic-reliability-framework.svg)](https://pypi.org/project/agentic-reliability-framework/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/agentic-reliability-framework.svg)](https://pypi.org/project/agentic-reliability-framework/)
 [![Tests](https://github.com/petter2025us/agentic-reliability-framework/actions/workflows/python-package-conda.yml/badge.svg)](https://github.com/petter2025us/agentic-reliability-framework/actions/workflows/python-package-conda.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Hugging Face Space](https://img.shields.io/badge/demo%20space-v4-orange?logo=huggingface)](https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-v4)
-[![Hugging Face API](https://img.shields.io/badge/API%20%E2%80%93%20legacy-gray?logo=huggingface)](https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-API)
 
-Agentic Reliability Framework (ARF) is an open‑source advisory engine that
-simulates governance decisions for cloud infrastructure. Its mission is to
-provide **provably safe, mathematically grounded recommendations**—approve,
-deny, or escalate—when users request provisioning, configuration, or access
-changes.
+## 🎯 Overview
 
-This repository contains the **OSS core**. Enterprise customers layer proprietary
-enforcement and auditorship on top; the OSS code is safe to run in isolation
-because outputs are marked `OSS_ADVISORY_ONLY` when enforcement is required.
+**Agentic Reliability Framework (ARF)** is an open‑source advisory engine for cloud infrastructure governance. It provides **provably safe, mathematically grounded recommendations**—approve, deny, or escalate—when users request provisioning, configuration, or access changes.
+
+Powered by **Bayesian probabilistic models** (conjugate priors + HMC sampling), **composable policy algebra**, and **semantic memory** (FAISS + embeddings), ARF delivers:
+
+- **Transparent decisions** with audit trails and human-readable justifications
+- **Fast online learning** using beta-binomial conjugate priors  
+- **Deep pattern discovery** via Hamiltonian Monte Carlo (HMC/NUTS)
+- **Contextual analysis** by retrieving similar past incidents from a semantic graph
+- **Multi-agent orchestration** with anomaly detection, root cause analysis, and forecasting
+
+This repository contains the **OSS core** for inference and advisory analysis. Enterprise customers layer enforcement, audit trails, and proprietary safety heuristics on top.
+
+### Key Insight: Deterministic Probability Thresholding (DPT)
+
+Instead of credible intervals, p-values, or fuzzy logic, ARF uses **transparent thresholds**:
+
+- **Approve** if P(failure) < 0.2
+- **Deny** if P(failure) > 0.8  
+- **Escalate** if 0.2 ≤ P(failure) ≤ 0.8
+
+This makes decisions auditable, reproducible, and immune to the "credibility paradox."
 
 ---
 

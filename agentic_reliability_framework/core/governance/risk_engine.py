@@ -585,9 +585,6 @@ class RiskEngine:
         if hasattr(intent, "environment") and intent.environment == "prod":
             mult *= 1.5
         # some intents (e.g. DeployConfigurationIntent) use `deployment_target`
-        # Check for production environment in various intent fields
-        if hasattr(intent, "environment") and intent.environment == "prod":
-            mult *= 1.5
         elif hasattr(intent, "deployment_target") and intent.deployment_target == "prod":
             mult *= 1.5
         # Additional factors could be added
