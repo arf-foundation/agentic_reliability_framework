@@ -1,4 +1,3 @@
-# agentic_reliability_framework/infrastructure/healing_intent.py
 """
 Healing Intent - OSS creates, Enterprise executes
 Enhanced with probabilistic confidence, risk scoring, cost projection,
@@ -1176,6 +1175,7 @@ class HealingIntentSerializer:
                 data.pop("infrastructure_intent_id", None)
                 data.pop("policy_violations", None)
                 data.pop("infrastructure_intent", None)
+                data.pop("confidence_interval", None)  # <-- ADDED: remove computed confidence_interval
 
                 # Ensure status is compatible
                 if data.get("status") in [
