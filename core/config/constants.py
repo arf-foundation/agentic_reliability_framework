@@ -19,7 +19,7 @@ import importlib
 def _get_oss_version() -> str:
     """
     Get OSS version from package metadata
-    
+
     Returns:
         Version string like "4.0.0-oss"
     """
@@ -130,121 +130,121 @@ class OSSBoundaryError(RuntimeError):
 def validate_oss_config(config: Dict[str, Any]) -> None:
     """
     Validate runtime configuration against OSS boundaries
-    
+
     Args:
         config: Current configuration dictionary
-        
+
     Raises:
         OSSBoundaryError: If any OSS boundary is violated
     """
     violations: List[str] = []
-    
+
     # Check MCP mode
     mcp_mode = config.get("mcp_mode", "advisory")
     if not isinstance(mcp_mode, str):
         violations.append(f"MCP mode must be string, got {type(mcp_mode)}")
         mcp_mode = str(mcp_mode)
-    
+
     mcp_mode = mcp_mode.lower()
     if mcp_mode != "advisory":
         violations.append(
             f"MCP mode must be 'advisory' in OSS edition. Got: '{mcp_mode}'. "
             f"Upgrade to Enterprise for approval/autonomous modes."
         )
-    
+
     # Check execution capability
     mcp_enabled = config.get("mcp_enabled", False)
     if not isinstance(mcp_enabled, bool):
         violations.append(f"mcp_enabled must be boolean, got {type(mcp_enabled)}")
         mcp_enabled = bool(mcp_enabled)
-    
+
     if mcp_enabled and mcp_mode != "advisory":
         violations.append(
             "MCP execution requires Enterprise edition. "
             "OSS edition only supports advisory (analysis) mode."
         )
-    
+
     # Check storage limits
     max_events = config.get("max_events_stored", 1000)
     if not isinstance(max_events, (int, float)):
         violations.append(f"max_events_stored must be number, got {type(max_events)}")
         max_events = 0
-    
+
     if int(max_events) > MAX_INCIDENT_HISTORY:
         violations.append(
             f"max_events_stored exceeds OSS limit: {int(max_events)} > {MAX_INCIDENT_HISTORY}"
         )
-    
+
     # Check RAG limits
     rag_nodes = config.get("rag_max_incident_nodes", 1000)
     if not isinstance(rag_nodes, (int, float)):
         violations.append(f"rag_max_incident_nodes must be number, got {type(rag_nodes)}")
         rag_nodes = 0
-    
+
     if int(rag_nodes) > MAX_INCIDENT_NODES:
         violations.append(
             f"rag_max_incident_nodes exceeds OSS limit: {int(rag_nodes)} > {MAX_INCIDENT_NODES}"
         )
-    
+
     rag_outcomes = config.get("rag_max_outcome_nodes", 5000)
     if not isinstance(rag_outcomes, (int, float)):
         violations.append(f"rag_max_outcome_nodes must be number, got {type(rag_outcomes)}")
         rag_outcomes = 0
-    
+
     if int(rag_outcomes) > MAX_OUTCOME_NODES:
         violations.append(
             f"rag_max_outcome_nodes exceeds OSS limit: {int(rag_outcomes)} > {MAX_OUTCOME_NODES}"
         )
-    
+
     # Check feature flags
     learning_enabled = config.get("learning_enabled", False)
     if not isinstance(learning_enabled, bool):
         violations.append(f"learning_enabled must be boolean, got {type(learning_enabled)}")
         learning_enabled = False
-    
+
     if learning_enabled:
         violations.append("Learning engine requires Enterprise edition")
-    
+
     beta_enabled = config.get("beta_testing_enabled", False)
     if not isinstance(beta_enabled, bool):
         violations.append(f"beta_testing_enabled must be boolean, got {type(beta_enabled)}")
         beta_enabled = False
-    
+
     if beta_enabled:
         violations.append("Beta testing features require Enterprise edition")
-    
+
     rollout_percentage = config.get("rollout_percentage", 0)
     if not isinstance(rollout_percentage, (int, float)):
         violations.append(f"rollout_percentage must be number, got {type(rollout_percentage)}")
         rollout_percentage = 0
-    
+
     if float(rollout_percentage) > 0:
         violations.append("Rollout features require Enterprise edition")
-    
+
     # Check for Enterprise storage backends
     storage_type = config.get("graph_storage", "in_memory")
     if not isinstance(storage_type, str):
         violations.append(f"graph_storage must be string, got {type(storage_type)}")
         storage_type = "in_memory"
-    
+
     if storage_type.lower() != "in_memory":
         violations.append(
             f"Storage backend '{storage_type}' requires Enterprise edition. "
             f"OSS edition only supports 'in_memory' storage."
         )
-    
+
     # Check FAISS index type (if specified)
     faiss_type = config.get("faiss_index_type", "IndexFlatL2")
     if not isinstance(faiss_type, str):
         violations.append(f"faiss_index_type must be string, got {type(faiss_type)}")
         faiss_type = "IndexFlatL2"
-    
+
     if faiss_type != "IndexFlatL2":
         violations.append(
             f"FAISS index type '{faiss_type}' requires Enterprise edition. "
             f"OSS edition only supports 'IndexFlatL2'."
         )
-    
+
     if violations:
         error_msg = (
             f"OSS CONFIGURATION VIOLATIONS DETECTED:\n\n" +
@@ -262,7 +262,7 @@ def validate_oss_config(config: Dict[str, Any]) -> None:
 def get_oss_capabilities() -> Dict[str, Any]:
     """
     Get OSS edition capabilities for documentation and UI
-    
+
     Returns:
         Dictionary of OSS capabilities and limits
     """
@@ -271,7 +271,7 @@ def get_oss_capabilities() -> Dict[str, Any]:
         "license": OSS_LICENSE,
         "version": OSS_VERSION,
         "constants_hash": OSS_CONSTANTS_HASH,
-        
+
         "execution": {
             "modes": list(MCP_MODES_ALLOWED),
             "allowed": EXECUTION_ALLOWED,
@@ -279,7 +279,7 @@ def get_oss_capabilities() -> Dict[str, Any]:
             "max_rag_lookback_days": MAX_RAG_LOOKBACK_DAYS,
             "max_cooldown_entries": MAX_COOLDOWN_ENTRIES,
         },
-        
+
         "memory": {
             "type": STORAGE_BACKEND,
             "max_incident_nodes": MAX_INCIDENT_NODES,
@@ -289,7 +289,7 @@ def get_oss_capabilities() -> Dict[str, Any]:
             "similarity_threshold": SIMILARITY_THRESHOLD,
             "graph_cache_size": GRAPH_CACHE_SIZE,
         },
-        
+
         "features": {
             "rag_enabled": True,
             "mcp_advisory_enabled": True,
@@ -302,7 +302,7 @@ def get_oss_capabilities() -> Dict[str, Any]:
             "enterprise_integration": False,
             "beta_features": False,
         },
-        
+
         "limits": {
             "max_tools": MAX_TOOLS,
             "max_concurrent_analysis": MAX_CONCURRENT_ANALYSIS,
@@ -315,10 +315,10 @@ def get_oss_capabilities() -> Dict[str, Any]:
             "max_decision_tree_depth": MAX_DECISION_TREE_DEPTH,
             "max_alternative_actions": MAX_ALTERNATIVE_ACTIONS,
         },
-        
+
         "upgrade_available": True,
         "upgrade_url": ENTERPRISE_UPGRADE_URL,
-        
+
         "enterprise_features": [
             "autonomous_execution",
             "approval_workflows",
@@ -345,7 +345,7 @@ def get_oss_capabilities() -> Dict[str, Any]:
 def check_oss_compliance() -> bool:
     """
     Check if current runtime is OSS compliant
-    
+
     Returns:
         True if OSS compliant, False otherwise
     """
@@ -353,21 +353,21 @@ def check_oss_compliance() -> bool:
         # Check environment variables
         tier = os.getenv("ARF_TIER", "oss").lower()
         deployment_type = os.getenv("ARF_DEPLOYMENT_TYPE", "oss").lower()
-        
+
         # Check for enterprise deployment indicators
         # FIXED: Using different variable names to avoid OSS checker
         enterprise_env_var = os.getenv("ARF_ENTERPRISE_ENABLED")
         commercial_license = os.getenv("ARF_COMMERCIAL_LICENSE")
-        
+
         if enterprise_env_var and enterprise_env_var.lower() == "true":
             return False
         if commercial_license and commercial_license.lower() == "true":
             return False
-        
+
         # Check deployment type
         if deployment_type != "oss":
             return False
-        
+
         # Check for Enterprise dependencies - SAFELY
         enterprise_dependencies = [
             "neo4j",
@@ -377,7 +377,7 @@ def check_oss_compliance() -> bool:
             "torch",  # Might be used for advanced embeddings
             "transformers",  # LLM integrations
         ]
-        
+
         for dep in enterprise_dependencies:
             try:
                 importlib.import_module(dep)
@@ -397,15 +397,15 @@ def check_oss_compliance() -> bool:
             except ImportError:
                 # Dependency not installed - good for OSS
                 pass
-        
+
         # Check environment variable for OSS compliance
         oss_force = os.getenv("ARF_OSS_FORCE", "false").lower()
         if oss_force in ["true", "1", "yes"]:
             return True
-        
+
         # Default: assume OSS if no enterprise indicators found
         return True
-        
+
     except Exception:
         # Default to OSS if cannot determine
         return True
@@ -414,14 +414,14 @@ def check_oss_compliance() -> bool:
 def validate_memory_implementation() -> None:
     """
     Validate that memory implementation meets OSS requirements
-    
+
     Checks:
     - FAISS uses only IndexFlatL2
     - No persistent storage dependencies
     - Embedding dimension matches OSS limit
     """
     violations: List[str] = []
-    
+
     try:
         # Use lazy import to avoid circular dependencies
         # Only import if the module exists and we're in a runtime that needs validation
@@ -432,7 +432,7 @@ def validate_memory_implementation() -> None:
                 # Use string inspection to avoid importing
                 import inspect
                 source = inspect.getsource(module.ProductionFAISSIndex.__init__)
-                
+
                 # Check for advanced FAISS indices (should not exist in OSS)
                 advanced_patterns = [
                     "IndexIVF",  # Inverted file
@@ -443,36 +443,36 @@ def validate_memory_implementation() -> None:
                     ".gpu",       # GPU acceleration
                     "res = faiss.",  # Direct FAISS construction
                 ]
-                
+
                 for pattern in advanced_patterns:
                     if pattern in source:
                         violations.append(f"FAISS pattern '{pattern}' requires Enterprise edition")
-        
+
         # Check memory constants if available
         if "agentic_reliability_framework.runtime.memory.constants" in sys.modules:
             module = sys.modules["agentic_reliability_framework.runtime.memory.constants"]
             if hasattr(module, "MemoryConstants"):
                 MemoryConstants = module.MemoryConstants
-                
+
                 if hasattr(MemoryConstants, 'MAX_INCIDENT_NODES'):
                     if getattr(MemoryConstants, 'MAX_INCIDENT_NODES') > MAX_INCIDENT_NODES:
                         violations.append(
                             f"MemoryConstants.MAX_INCIDENT_NODES exceeds OSS limit: "
                             f"{getattr(MemoryConstants, 'MAX_INCIDENT_NODES')} > {MAX_INCIDENT_NODES}"
                         )
-                
+
                 if hasattr(MemoryConstants, 'MAX_OUTCOME_NODES'):
                     if getattr(MemoryConstants, 'MAX_OUTCOME_NODES') > MAX_OUTCOME_NODES:
                         violations.append(
                             f"MemoryConstants.MAX_OUTCOME_NODES exceeds OSS limit: "
                             f"{getattr(MemoryConstants, 'MAX_OUTCOME_NODES')} > {MAX_OUTCOME_NODES}"
                         )
-        
+
     except Exception as e:
         # Don't fail validation on import errors
         # This allows tests to run without all dependencies
         pass
-    
+
     if violations:
         raise OSSBoundaryError(
             f"Memory implementation violates OSS boundaries:\n" +
@@ -483,7 +483,7 @@ def validate_memory_implementation() -> None:
 def get_oss_memory_limits() -> Dict[str, Any]:
     """
     Get OSS memory system limits for integration with existing code
-    
+
     This helps existing code (like rag_graph.py) use OSS limits
     """
     return {
@@ -501,27 +501,27 @@ def get_oss_memory_limits() -> Dict[str, Any]:
 def _validate_oss_constants_at_import() -> None:
     """Validate OSS constants at module import time"""
     violations: List[str] = []
-    
+
     # Check execution boundaries
     if EXECUTION_ALLOWED:
         violations.append("EXECUTION_ALLOWED must be False in OSS edition")
-    
+
     if MCP_MODES_ALLOWED != ("advisory",):
         violations.append(f"MCP_MODES_ALLOWED must be ('advisory',), got {MCP_MODES_ALLOWED}")
-    
+
     if GRAPH_STORAGE != "in_memory":
         violations.append(f"GRAPH_STORAGE must be 'in_memory', got '{GRAPH_STORAGE}'")
-    
+
     if FAISS_INDEX_TYPE != "IndexFlatL2":
         violations.append(f"FAISS_INDEX_TYPE must be 'IndexFlatL2', got '{FAISS_INDEX_TYPE}'")
-    
+
     # Check memory limits
     if MAX_INCIDENT_NODES > 1000:
         violations.append(f"MAX_INCIDENT_NODES must be ≤ 1000, got {MAX_INCIDENT_NODES}")
-    
+
     if MAX_OUTCOME_NODES > 5000:
         violations.append(f"MAX_OUTCOME_NODES must be ≤ 5000, got {MAX_OUTCOME_NODES}")
-    
+
     if violations:
         raise OSSBoundaryError(
             f"OSS constant validation failed at import:\n" +
@@ -539,7 +539,7 @@ if "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
 __all__ = [
     # === PERFORMANCE CONSTANTS ===
     "HISTORY_WINDOW",
-    
+
     # === CORE BOUNDARIES ===
     "MAX_INCIDENT_HISTORY",
     "MAX_RAG_LOOKBACK_DAYS",
@@ -547,7 +547,7 @@ __all__ = [
     "EXECUTION_ALLOWED",
     "GRAPH_STORAGE",
     "MAX_COOLDOWN_ENTRIES",
-    
+
     # === MEMORY BOUNDARIES ===
     "MAX_INCIDENT_NODES",
     "MAX_OUTCOME_NODES",
@@ -558,22 +558,22 @@ __all__ = [
     "STORAGE_BACKEND",
     "SIMILARITY_THRESHOLD",
     "GRAPH_CACHE_SIZE",
-    
+
     # === FEATURE BOUNDARIES ===
     "MAX_TOOLS",
     "MAX_CONCURRENT_ANALYSIS",
     "MAX_EVENT_RATE_PER_SECOND",
     "MAX_API_REQUESTS_PER_MINUTE",
-    
+
     # === POLICY LIMITS ===
     "MAX_POLICY_VIOLATIONS",
-    
+
     # === RISK & DECISION LIMITS ===
     "MAX_RISK_FACTORS",
     "MAX_COST_PROJECTIONS",
     "MAX_DECISION_TREE_DEPTH",
     "MAX_ALTERNATIVE_ACTIONS",
-    
+
     # === OPERATIONAL THRESHOLDS ===
     "LATENCY_WARNING",
     "LATENCY_CRITICAL",
@@ -585,19 +585,19 @@ __all__ = [
     "CPU_CRITICAL",
     "MEMORY_WARNING",
     "MEMORY_CRITICAL",
-    
+
     # === SECURITY BOUNDARIES ===
     "MAX_API_KEYS",
     "ALLOWED_ENVIRONMENTS",
     "DISALLOWED_ACTIONS",
-    
+
     # === VERSION & EDITION ===
     "OSS_EDITION",
     "OSS_LICENSE",
     "OSS_VERSION",
     "ENTERPRISE_UPGRADE_URL",
     "OSS_CONSTANTS_HASH",
-    
+
     # === VALIDATION FUNCTIONS ===
     "OSSBoundaryError",
     "validate_oss_config",
