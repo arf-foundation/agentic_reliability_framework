@@ -1374,6 +1374,9 @@ def create_infrastructure_healing_intent(
     if policy_violations:
         justification_parts.append(f"Policy violations: {'; '.join(policy_violations)}")
 
+    # Extract cost projection for top-level field
+    cost_projection = getattr(infrastructure_result, 'cost_projection', None)
+
     return HealingIntent.from_infrastructure_intent(
         infrastructure_intent=getattr(infrastructure_result, 'infrastructure_intent', None),
         action=action,
@@ -1382,6 +1385,7 @@ def create_infrastructure_healing_intent(
         justification=" ".join(justification_parts),
         confidence=getattr(infrastructure_result, 'confidence_score', 0.85),
         risk_score=getattr(infrastructure_result, 'risk_score', None),
+        cost_projection=cost_projection,  # <-- ADDED: pass cost_projection explicitly
         policy_violations=policy_violations,
         recommended_action=recommended_action,
         source=IntentSource.INFRASTRUCTURE_ANALYSIS
