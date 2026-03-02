@@ -92,8 +92,8 @@ def test_allow_all_policy():
     evaluator = PolicyEvaluator(policy)
     intent = ProvisionResourceIntent(
         resource_type=ResourceType.VM,
-        region="mars",
-        size="any",
+        region="eastus",                 # valid region
+        size="Standard_D2s_v3",           # valid size
         requester="alice",
         environment="prod"
     )
