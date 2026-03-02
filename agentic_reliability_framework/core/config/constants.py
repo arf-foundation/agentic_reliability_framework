@@ -117,6 +117,27 @@ MAX_CONCURRENT_ANALYSIS: Final[int] = 10
 MAX_EVENT_RATE_PER_SECOND: Final[int] = 100
 MAX_API_REQUESTS_PER_MINUTE: Final[int] = 60  # From config.max_requests_per_minute
 
+# === POLICY LIMITS ===
+MAX_POLICY_VIOLATIONS: Final[int] = 10  # Maximum number of policy violations to consider in a single evaluation
+
+# === RISK & DECISION LIMITS ===
+MAX_RISK_FACTORS: Final[int] = 10        # Maximum number of risk factors considered in a risk assessment
+MAX_COST_PROJECTIONS: Final[int] = 5     # Maximum number of cost projection scenarios
+MAX_DECISION_TREE_DEPTH: Final[int] = 5  # Maximum depth of decision tree for explanation
+MAX_ALTERNATIVE_ACTIONS: Final[int] = 3  # Maximum number of alternative actions to consider
+
+# ==================== OPERATIONAL THRESHOLDS ====================
+LATENCY_WARNING: Final[float] = 150.0
+LATENCY_CRITICAL: Final[float] = 300.0
+LATENCY_EXTREME: Final[float] = 500.0
+ERROR_RATE_WARNING: Final[float] = 0.05
+ERROR_RATE_HIGH: Final[float] = 0.15
+ERROR_RATE_CRITICAL: Final[float] = 0.3
+CPU_WARNING: Final[float] = 0.8
+CPU_CRITICAL: Final[float] = 0.9
+MEMORY_WARNING: Final[float] = 0.8
+MEMORY_CRITICAL: Final[float] = 0.9
+
 # === SECURITY BOUNDARIES ===
 MAX_API_KEYS: Final[int] = 1  # Only HuggingFace API key
 ALLOWED_ENVIRONMENTS: Final[Tuple[str, ...]] = ("development", "staging", "production")
@@ -339,6 +360,11 @@ def get_oss_capabilities() -> Dict[str, Any]:
             "max_event_rate": MAX_EVENT_RATE_PER_SECOND,
             "max_api_keys": MAX_API_KEYS,
             "max_api_requests_per_minute": MAX_API_REQUESTS_PER_MINUTE,
+            "max_policy_violations": MAX_POLICY_VIOLATIONS,
+            "max_risk_factors": MAX_RISK_FACTORS,
+            "max_cost_projections": MAX_COST_PROJECTIONS,
+            "max_decision_tree_depth": MAX_DECISION_TREE_DEPTH,
+            "max_alternative_actions": MAX_ALTERNATIVE_ACTIONS,
         },
         
         "upgrade_available": True,
@@ -589,6 +615,27 @@ __all__ = [
     "MAX_EVENT_RATE_PER_SECOND",
     "MAX_API_REQUESTS_PER_MINUTE",
     
+    # === POLICY LIMITS ===
+    "MAX_POLICY_VIOLATIONS",
+    
+    # === RISK & DECISION LIMITS ===
+    "MAX_RISK_FACTORS",
+    "MAX_COST_PROJECTIONS",
+    "MAX_DECISION_TREE_DEPTH",
+    "MAX_ALTERNATIVE_ACTIONS",
+    
+    # === OPERATIONAL THRESHOLDS ===
+    "LATENCY_WARNING",
+    "LATENCY_CRITICAL",
+    "LATENCY_EXTREME",
+    "ERROR_RATE_WARNING",
+    "ERROR_RATE_HIGH",
+    "ERROR_RATE_CRITICAL",
+    "CPU_WARNING",
+    "CPU_CRITICAL",
+    "MEMORY_WARNING",
+    "MEMORY_CRITICAL",
+    
     # === SECURITY BOUNDARIES ===
     "MAX_API_KEYS",
     "ALLOWED_ENVIRONMENTS",
@@ -609,12 +656,3 @@ __all__ = [
     "validate_memory_implementation",
     "get_oss_memory_limits",
 ]
-
-MAX_POLICY_VIOLATIONS: Final[int] = 100
-
-# === INFRASTRUCTURE-SPECIFIC CONSTANTS (for governance module) ===
-MAX_POLICY_VIOLATIONS: Final[int] = 100
-MAX_RISK_FACTORS: Final[int] = 20
-MAX_COST_PROJECTIONS: Final[int] = 10
-MAX_DECISION_TREE_DEPTH: Final[int] = 10
-MAX_ALTERNATIVE_ACTIONS: Final[int] = 5
