@@ -523,10 +523,13 @@ class RiskEngine:
     def _context_multiplier(self, intent: InfrastructureIntent) -> float:
         """Compute multiplier based on environment, user role, time, etc."""
         mult = 1.0
-        if hasattr(intent, "environment") and intent.environment == "prod":  # <-- FIXED
+        # Check for production environment in various intent fields
+        if hasattr(intent, "environment") and intent.environment == "prod":
             mult *= 1.5
+        elif hasattr(intent, "deployment_target") and intent.deployment_target == "prod":
+            mult *= 1.5
+        # Additional factors could be added
         return mult
-
 
 # For backward compatibility
 class RiskFactor:
