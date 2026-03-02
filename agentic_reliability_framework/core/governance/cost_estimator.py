@@ -90,19 +90,26 @@ class CostEstimator:
             self._pricing = self.DEFAULT_PRICING.copy()
 
     @lru_cache(maxsize=256)
+    def _cached_estimate(self, resource_type: ResourceType, size: str) -> Optional[float]:
+        """
+        Internal helper using primitive args so that lru_cache does not try to
+        hash a Pydantic model (which may contain unhashable dicts).
+        """
+        prices = self._pricing.get(resource_type)
+        if prices is None:
+            return None
+        return prices.get(size)
+
     def estimate_monthly_cost(self, intent: ProvisionResourceIntent) -> Optional[float]:
         """
-        Deterministic cost estimate.
+        Deterministic cost estimate based on an intent.
+
+        Uses a cached helper that accepts only hashable components.
 
         Returns:
             Monthly cost in USD, or None if the size is not found.
         """
-        resource_pricing = self._pricing.get(intent.resource_type)
-        if not resource_pricing:
-            return None
-
-        # Exact match on size string
-        return resource_pricing.get(intent.size)
+        return self._cached_estimate(intent.resource_type, intent.size)
 
     def cost_delta_vs_baseline(
         self,
