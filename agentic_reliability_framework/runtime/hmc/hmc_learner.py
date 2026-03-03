@@ -186,3 +186,42 @@ class HMCRiskLearner:
                 'p_gt_0': float((beta_samples > 0).mean())
             }
         return coeffs
+
+    def predict(self, metrics: Dict[str, float]) -> float:
+        """
+        Predict the risk probability for a new observation (scalar prediction).
+
+        This is the main entry point for integration with risk_engine.py.
+        Returns a single scalar float in [0,1] representing the probability
+        of a critical/high-severity incident based on the provided metrics.
+
+        Args:
+            metrics: Dictionary with optional keys 'latency_p99', 'error_rate',
+                     'throughput', 'cpu_util', 'memory_util'. Missing keys default to 0.
+
+        Returns:
+            float: Risk probability in [0,1]. Returns 0.5 if model not trained.
+
+        Example:
+            >>> hmc = HMCRiskLearner()
+            >>> hmc.train([...historical_data...])
+            >>> risk = hmc.predict({
+            ...     'latency_p99': 350,
+            ...     'error_rate': 0.08,
+            ...     'throughput': 900
+            ... })
+            >>> print(f"Risk score: {risk:.3f}")  # e.g., 0.623
+        """
+        if not self.is_ready:
+            logger.debug("HMC model not trained; returning default risk 0.5")
+            return 0.5
+
+        try:
+            samples = self.posterior_predictive(metrics)
+            # Return the mean of the posterior distribution
+            mean_risk = float(np.mean(samples))
+            # Ensure result is in [0,1]
+            return min(max(mean_risk, 0.0), 1.0)
+        except Exception as e:
+            logger.error(f"HMC predict failed: {e}, returning default 0.5")
+            return 0.5

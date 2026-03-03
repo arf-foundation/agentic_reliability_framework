@@ -177,18 +177,49 @@ class PolicyEngine:
         return True
 
     def _is_rate_limited(self, key: str, policy: HealingPolicy, now: float) -> bool:
-        """Check if the policy has exceeded its hourly execution limit."""
+        """
+        Check if the policy has exceeded its hourly execution limit.
+
+        This method prunes old timestamps BEFORE checking the rate limit to ensure
+        correct behavior. Thread-safety is enforced by the caller (evaluate_policies).
+
+        Args:
+            key: Policy key (policy_name_component)
+            policy: HealingPolicy with max_executions_per_hour limit
+            now: Current timestamp (seconds since epoch)
+
+        Returns:
+            bool: True if rate limit exceeded, False otherwise.
+        """
         if key not in self.execution_timestamps:
+            # First time this policy was triggered for this component
             return False
-        one_hour_ago = now - 3600
-        recent = [ts for ts in self.execution_timestamps[key] if ts > one_hour_ago]
-        self.execution_timestamps[key] = recent
-        return len(recent) >= policy.max_executions_per_hour
+
+        # Prune timestamps older than 1 hour
+        one_hour_ago = now - 3600.0
+        recent_timestamps = [ts for ts in self.execution_timestamps[key] if ts > one_hour_ago]
+        self.execution_timestamps[key] = recent_timestamps
+
+        # Check if we've hit the limit
+        is_limited = len(recent_timestamps) >= policy.max_executions_per_hour
+        return is_limited
 
     def _record_execution(self, key: str, ts: float):
-        """Record an execution timestamp for rate limiting."""
+        """
+        Record an execution timestamp for rate limiting.
+
+        Appends timestamp and enforces max history size.
+        Thread-safety is enforced by the caller (evaluate_policies).
+
+        Args:
+            key: Policy key (policy_name_component)
+            ts: Timestamp to record (seconds since epoch)
+        """
         if key not in self.execution_timestamps:
             self.execution_timestamps[key] = []
+        
         self.execution_timestamps[key].append(ts)
+        
+        # Trim to latest max_execution_history entries (LRU eviction)
         if len(self.execution_timestamps[key]) > self.max_execution_history:
             self.execution_timestamps[key] = self.execution_timestamps[key][-self.max_execution_history:]
