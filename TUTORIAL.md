@@ -44,7 +44,7 @@ etc.) that ARF analyzes.
 
 Responsible for computing a risk score using hybrid Bayesian models: fast
 conjugate priors online and heavier HMC predictors offline. See
-`core/governance/risk_engine.py` for details.
+`core/governance/risk_engine.py` for details. Note: the OSS engine uses per‑category default Beta priors (see the code) rather than a single uniform prior.
 
 ### **Policy Algebra**
 
@@ -61,7 +61,7 @@ and produces a healing intent.
 
 ```python
 from agentic_reliability_framework.core.governance.policies import (
-    RegionAllowedPolicy, CostThresholdPolicy, PolicyEvaluator, allow_all
+    RegionAllowedPolicy, CostThresholdPolicy, PolicyEvaluator
 )
 from agentic_reliability_framework.core.governance.risk_engine import RiskEngine
 from agentic_reliability_framework.core.governance.healing_intent import HealingIntent
@@ -140,19 +140,20 @@ and a synthesized summary.
 ## 5. Interpreting Risk Scores and Credible Intervals
 
 The `RiskEngine.calculate_risk` returns a float in [0,1] plus an explanatory
-string. The online conjugate mean alone has a closed‑form Beta posterior; you
-can compute credible intervals if desired using the stored alpha/beta values:
+string. You can inspect the conjugate posterior parameters (alpha, beta) from the engine's beta store and compute credible intervals if desired. Example:
 
 ```python
+from agentic_reliability_framework.core.governance.risk_engine import categorize_intent
 from scipy.stats import beta
-alpha, beta_param = engine.beta_store.get(categor)
+
+# compute category for an intent (use the same categorization the engine uses)
+category = categorize_intent(intent)
+alpha, beta_param = engine.beta_store.get(category)
 ci = beta.interval(0.95, alpha, beta_param)
 print("95% interval", ci)
 ```
 
-These intervals are used internally by the **Deterministic Probability
-Thresholding** rule to decide approve/deny/escalate (configured via
-`\tau_{low}`/`\tau_{high}`).
+Note: the OSS engine uses tuned, per‑category priors by default (see `core/governance/risk_engine.py`). The mapping from risk score to an action (approve/deny/escalate) is typically performed by applying deterministic thresholds (DPT) in the calling layer.
 
 ---
 
@@ -175,4 +176,3 @@ components live.
 That concludes the quick tour! Dive into the code, read the docs at
 https://docs.agentic-reliability-framework.io, and don't hesitate to open an
 issue or contribute a PR. Happy hacking!
-

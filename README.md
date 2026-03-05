@@ -78,21 +78,21 @@ on‑the‑fly learning with deep offline analysis and contextual memory.
 ### Bayesian Online Learning with Conjugate Priors
 
 To update risk continuously as outcomes arrive, ARF maintains a
-Beta–Binomial model. For each intent category the engine tracks success/failure
-counts \(s,f\) and maintains a posterior
+Beta–Binomial model. The implementation uses per‑category Beta priors (OSS defaults are non‑uniform), and updates are performed by counting successes (s) and failures (f) and computing the posterior Beta parameters.
 
-\[
-\text{Beta}(\alpha + s,\;\beta + f)
-\]
+The posterior mean (predicted failure probability) is:
 
-with default prior \(\alpha=\beta=1\). The predicted risk is the posterior
-mean
+    E[p] = (alpha + s) / (alpha + beta + s + f)
 
-\[
-\mathbb{E}[p]=\frac{\alpha + f}{\alpha+\beta+s+f}.
-\]
+Important: the OSS implementation ships with tuned, category‑specific priors (not a uniform α=β=1). Example defaults in the codebase include:
 
-Conjugacy makes updates trivial and ensures the system adapts in real time.
+- database: Beta(α=1.5, β=8.0)
+- network:  Beta(α=1.2, β=10.0)
+- compute:  Beta(α=1.0, β=12.0)
+- security: Beta(α=2.0, β=10.0)
+- default:  Beta(α=1.0, β=10.0)
+
+These priors are configurable in the code and chosen to reflect pessimistic priors for high‑impact categories (see `core/governance/risk_engine.py`).
 
 ### Offline Pattern Discovery via HMC (NUTS)
 
@@ -105,7 +105,7 @@ logistic regression using Hamiltonian Monte Carlo with the No‑U‑Turn Sampler
   + w_{\sin\omega t} + w_{\cos\omega t} + \cdots),
 \]
 
-where the cyclical encoding \((\sin, \cos)\) of time \(t\) captures daily
+where the cyclical encoding `(sin, cos)` of time `t` captures daily
 rhythms. The HMC implementation (via PyMC/ArviZ) learns a posterior over
 weights; the model is serialized to `hmc_model.json` and hot‑loaded by the
 simulator. The offline engine can be retrained periodically with new data.
@@ -113,15 +113,13 @@ simulator. The offline engine can be retrained periodically with new data.
 ### Hybrid Architecture
 
 At lookup time the final risk score is a weighted blend of the online beta
-estimate and the offline HMC prediction:
+estimate, an optional hierarchical hyperprior component, and the offline HMC prediction. Unlike a single fixed mixing parameter (λ), the OSS engine computes blending weights dynamically based on available data and configurable parameters. The runtime logic considers:
 
-\[
-\text{risk} = \lambda\cdot\text{risk}_{\text{online}}
- + (1-\lambda)\cdot\text{risk}_{\text{offline}},
-\]
+- the conjugate posterior mean (always available),
+- an optional hyperprior summary (enabled only if Pyro is installed and configured),
+- an HMC prediction (available when an HMC model has been trained and loaded).
 
-where \(\lambda\) is configurable (default 0.5). This hybrid design offers
-fast adaptation and deep pattern recognition.
+Weights are determined by the amount of historical incidents and parameters exposed by the `RiskEngine` such as `n0` (HMC confidence threshold) and `hyperprior_weight`. See `core/governance/risk_engine.py` for the exact weighting rules and defaults.
 
 ### Semantic Memory
 
@@ -132,17 +130,7 @@ confidence and recommendations.
 
 ### Deterministic Probability Thresholding (DPT)
 
-We introduce **DPT**, a novel decision rule distinct from Bayesian credible
-intervals, frequentist p‑values, or fuzzy logic. It compares the posterior
-failure probability directly against fixed thresholds:
-
-- **Approve** if `P(failure) < τ_low`
-- **Deny** if `P(failure) > τ_high`
-- **Escalate** otherwise
-
-Thresholds `τ_low` and `τ_high` are deterministic constants (e.g., 0.2/0.8),
-making decisions transparent, auditable, and immune to the “credibility
-paradox”.
+We introduce **DPT**, a decision rule that compares the posterior failure probability directly against fixed thresholds (for example `τ_low=0.2`, `τ_high=0.8`). The OSS core returns risk scores and explanations; how those scores are mapped to final actions (approve/deny/escalate) is typically applied by the calling layer (simulator or enterprise enforcement) using deterministic thresholds.
 
 ### Cyclical Time Encoding
 
@@ -220,4 +208,3 @@ storage_account:
   "50GB": 5.0
   "1TB": 100.0
 ```
-
