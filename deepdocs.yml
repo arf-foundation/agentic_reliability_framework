@@ -1,0 +1,4 @@
+target:
+  - url: "docs/"           # or point to specific files like README.md
+include: []                 # monitor whole repo
+reinit: "initial-setup"     # any random string, change to force a re‑scan
