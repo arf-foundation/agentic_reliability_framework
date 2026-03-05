@@ -1,4 +1,11 @@
 target:
-  - url: "docs/"           # or point to specific files like README.md
-include: []                 # monitor whole repo
-reinit: "initial-setup"     # any random string, change to force a re‑scan
+  - url: "README.md"
+  - url: "CONTRIBUTING.md"
+  - url: "TUTORIAL.md"
+  - url: "docs/memory.md"
+  - url: "CHANGELOG.md"
+
+include:
+  - "agentic_reliability_framework/"
+
+reinit: "initial-2025-03-06"
