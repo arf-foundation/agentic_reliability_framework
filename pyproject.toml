@@ -38,4 +38,4 @@ Homepage = "https://github.com/petter2025us/agentic-reliability-framework"
 include = ["agentic_reliability_framework*"]
 
 [project.scripts]
-arf = "arf_cli:main"
+arf = "agentic_reliability_framework.cli.main:main"

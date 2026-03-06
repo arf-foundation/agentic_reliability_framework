@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
-"""
-ARF CLI Entry Point
-Usage: arf diagnose [options]
-"""
+"""ARF CLI entry point."""
 import sys
 import argparse
+from .diagnose import main as diagnose_main
 
 def main():
     parser = argparse.ArgumentParser(description="Agentic Reliability Framework CLI")
@@ -12,9 +9,8 @@ def main():
     args, remaining = parser.parse_known_args()
 
     if args.command == "diagnose":
-        from agentic_reliability_framework.cli.diagnose import main as diagnose_main
         sys.argv = [sys.argv[0]] + remaining
-        sys.exit(diagnose_main())
+        return diagnose_main()
     else:
         parser.print_help()
         return 1
