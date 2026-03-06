@@ -36,3 +36,6 @@ Homepage = "https://github.com/petter2025us/agentic-reliability-framework"
 
 [tool.setuptools.packages.find]
 include = ["agentic_reliability_framework*"]
+
+[project.scripts]
+arf = "arf_cli:main"
