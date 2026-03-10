@@ -974,7 +974,7 @@ class OSSMCPClient:
             }
             if relevant_context:
                 context_str = json.dumps(relevant_context, sort_keys=True, default=str)
-                key_parts.append(f"ctx:{hashlib.md5(context_str.encode()).hexdigest()[:8]}")
+                key_parts.append(f"ctx:{hashlib.md5(context_str.encode(), usedforsecurity=False).hexdigest()[:8]}")
         
         # Join parts with delimiter
         return "|".join(key_parts)

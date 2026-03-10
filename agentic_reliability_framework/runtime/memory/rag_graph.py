@@ -180,7 +180,7 @@ class RAGGraphMemory:
             self._stats["total_outcomes_stored"] += 1
             # Edge
             edge = GraphEdge(
-                edge_id=f"edge_{hashlib.md5(f'{incident_id}{outcome_id}'.encode()).hexdigest()[:16]}",
+                edge_id=f"edge_{hashlib.md5(f'{incident_id}{outcome_id}'.encode(), usedforsecurity=False).hexdigest()[:16]}",
                 source_id=incident_id,
                 target_id=outcome_id,
                 edge_type=EdgeType.RESOLVED_BY,
