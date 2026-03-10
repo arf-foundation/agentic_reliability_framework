@@ -98,7 +98,7 @@ RECOMMENDED ACTION: REROUTE
 • Success probability: 92% (based on historical data)
 RATIONALE: Rerouting bypasses degraded provider, allows time for upstream recovery."""
         elif "predictive" in prompt_lower or "forecast" in prompt_lower:
-            return """📈 PREDICTIVE FORECAST ANALYSIS:
+            return r"""📈 PREDICTIVE FORECAST ANALYSIS:
 CURRENT TRAJECTORY:
 • Error rate: Increasing at 12%/minute (exponential trend)
 • Latency: Accelerating degradation (quadratic curve)
