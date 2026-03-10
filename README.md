@@ -124,10 +124,10 @@ Weights are determined by the amount of historical incidents and parameters expo
 
 ### Semantic Memory
 
-Incidents are embedded using **sentence‑transformers** (`all-MiniLM-L6-v2`) and
-indexed with **FAISS**. When a new intent arrives the engine retrieves similar
-past incidents, providing context and historical effectiveness data to boost
-confidence and recommendations.
+In the Enterprise edition incidents are typically embedded using
+sentence‑transformers (for example `all-MiniLM-L6-v2`) and indexed with FAISS for hybrid vector search. In this OSS repository the RAG/graph memory uses a simplified, deterministic embedding fallback (no heavy ML dependencies) and an in‑memory FAISS IndexFlatL2 implementation for similarity search. This keeps the OSS package lightweight and runnable without large ML libraries; it also enforces an in‑memory FAISS backend and fixed embedding dim (see `core/config/constants.py`).
+
+If you need full sentence‑transformers embeddings locally, install the optional dependencies (e.g., `sentence-transformers`, `torch`) or use the Enterprise integration that supports advanced embedding backends and FAISS index types (IVF/HNSW/PQ).
 
 ### Deterministic Probability Thresholding (DPT)
 
