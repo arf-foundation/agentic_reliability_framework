@@ -72,7 +72,10 @@ class RAGGraphMemory:
         from agentic_reliability_framework.core.models.event import ReliabilityEvent
         if not isinstance(event, ReliabilityEvent):
             return f"inc_{hashlib.sha256(str(event).encode()).hexdigest()[:16]}"
-        data = f"{event.component}:{event.latency_p99:.2f}:{event.error_rate:.4f}"
+        # Use defaults to avoid None issues
+        lat = event.latency_p99 or 0.0
+        err = event.error_rate or 0.0
+        data = f"{event.component}:{lat:.2f}:{err:.4f}"
         return f"inc_{hashlib.sha256(data.encode()).hexdigest()[:16]}"
 
     def _embed_incident(self, event, analysis: Dict[str, Any]) -> np.ndarray:
@@ -80,7 +83,10 @@ class RAGGraphMemory:
         # In a real implementation, use sentence-transformers.
         # For OSS, we use a deterministic random based on event data.
         import hashlib
-        seed_str = f"{event.component}:{event.latency_p99}:{event.error_rate}"
+        # Use defaults to avoid None issues
+        lat = event.latency_p99 or 0
+        err = event.error_rate or 0
+        seed_str = f"{event.component}:{lat}:{err}"
         seed = int(hashlib.sha256(seed_str.encode()).hexdigest()[:8], 16)
         np.random.seed(seed)
         embedding = np.random.randn(MemoryConstants.VECTOR_DIM).astype(np.float32)
