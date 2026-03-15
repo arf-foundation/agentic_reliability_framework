@@ -12,7 +12,6 @@ from .healing_intent import HealingIntent, IntentSource, RecommendedAction, Inte
 from .policy_engine import PolicyEngine
 from .cost_estimator import CostEstimator
 from ..risk.engine import RiskEngine  # assuming exists
-from ...research.eclipse_probe.hallucination_model import hallucination_risk  # optional research signal
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +63,9 @@ class GovernanceLoop:
         if not self.enable_epistemic:
             return None
         try:
-            # This assumes the research probe is installed and accessible.
-            # In practice, you'd have a configuration flag and import guard.
+            # Deferred import – only when needed and if available
             from ...research.eclipse_probe.hallucination_model import hallucination_risk
-            # For now, return a placeholder
+            # For now, return a placeholder; replace with actual call when research probe is integrated
             return 0.2  # placeholder
         except ImportError:
             logger.debug("Epistemic probe not available")
@@ -105,7 +103,7 @@ class GovernanceLoop:
             return RecommendedAction.ESCALATE, "Situation too ambiguous"
 
         # Use DPT thresholds (from constants)
-        from ..config.constants import DPT_LOW, DPT_HIGH  # assume these exist
+        from ..config.constants import DPT_LOW, DPT_HIGH
         if total_risk < DPT_LOW:
             return RecommendedAction.APPROVE, f"Total risk {total_risk:.2f} below threshold"
         elif total_risk > DPT_HIGH:
@@ -123,12 +121,8 @@ class GovernanceLoop:
         # (assume intent is valid by construction)
 
         # 2. Evaluate hard policy constraints (deterministic)
-        # PolicyEngine.evaluate_policies returns list of actions, but we need violations.
-        # We'll use PolicyEvaluator from policies.py for violations.
-        from .policies import PolicyEvaluator  # assume we have a root policy
         # For now, we'll simulate policy violations list.
         policy_violations = context.get("policy_violations", [])  # placeholder
-
         hard_constraints_passed = len(policy_violations) == 0
 
         # 3. Compute cost pressure
@@ -185,14 +179,15 @@ class GovernanceLoop:
             cost_projection=cost_estimate,
         ).mark_as_oss_advisory()
 
-        # Add new fields
-        # Use object.__setattr__ because HealingIntent is frozen
+        # Add new fields (use object.__setattr__ because HealingIntent is frozen)
         object.__setattr__(healing_intent, "risk_contributions", risk_contributions)
         object.__setattr__(healing_intent, "policy_violations", policy_violations)
         object.__setattr__(healing_intent, "epistemic_uncertainty", epistemic_risk)
         object.__setattr__(healing_intent, "ambiguity_score", ambiguity)
-        object.__setattr__(healing_intent, "decision_margin", total_risk - 0.5 if action == RecommendedAction.ESCALATE else None)
-        # Add more fields as needed
+        if action == RecommendedAction.ESCALATE:
+            object.__setattr__(healing_intent, "decision_margin", total_risk - 0.5)
+        else:
+            object.__setattr__(healing_intent, "decision_margin", None)
 
         return healing_intent
 
