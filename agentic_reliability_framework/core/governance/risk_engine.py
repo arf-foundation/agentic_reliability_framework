@@ -99,9 +99,9 @@ class BetaStore:
         with self._lock:
             alpha, beta = self._data[category]
             if success:
-                alpha += 1
+                alpha += 1.0
             else:
-                beta += 1
+                beta += 1.0
             self._data[category] = (alpha, beta)
 
 

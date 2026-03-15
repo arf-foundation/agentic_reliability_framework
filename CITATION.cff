@@ -4,8 +4,8 @@ authors:
   - family-names: "Petter"
     given-names: "Juan"
 title: "Agentic Reliability Framework (ARF)"
-version: "4.0.1+oss"
-date-released: 2026-03-07 
+version: "4.2.0+oss"
+date-released: 2026-03-15
 url: "https://github.com/arf-foundation/agentic-reliability-framework"
 repository-code: "https://github.com/arf-foundation/agentic-reliability-framework"
 license: "Apache-2.0"
