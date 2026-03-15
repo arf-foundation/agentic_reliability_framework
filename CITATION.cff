@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Petter"
+    given-names: "Juan"
+title: "Agentic Reliability Framework (ARF)"
+version: "4.0.1+oss"
+date-released: 2026-03-07  # approximate date of the v4.0.1+oss release; adjust if needed
+url: "https://github.com/arf-foundation/agentic-reliability-framework"
+repository-code: "https://github.com/arf-foundation/agentic-reliability-framework"
+license: "Apache-2.0"
