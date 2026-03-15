@@ -2,17 +2,15 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 # ==================== ENUMS ====================
-# New canonical Severity (for ReliabilityEvent)
 class Severity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
-# Backward compatibility: old EventSeverity (used in tests and other modules)
 class EventSeverity(str, Enum):
     INFO = "info"
     WARNING = "warning"
@@ -20,7 +18,6 @@ class EventSeverity(str, Enum):
     ERROR = "error"
     CRITICAL = "critical"
 
-# Backward compatibility: old HealingAction
 class HealingAction(str, Enum):
     NO_ACTION = "no_action"
     RESTART_CONTAINER = "restart_container"
@@ -32,7 +29,6 @@ class HealingAction(str, Enum):
 
 # ==================== FORECAST RESULT ====================
 class ForecastResult(BaseModel):
-    """Result of a forecasting analysis."""
     metric: str
     predicted_value: float
     confidence: float
@@ -42,22 +38,17 @@ class ForecastResult(BaseModel):
 
 # ==================== VALIDATION FUNCTION ====================
 def validate_component_id(component: str) -> Tuple[bool, str]:
-    """Validate a component identifier (backward compatibility)."""
     if not component or not component.strip():
         return False, "Component ID cannot be empty"
     if len(component) > 64:
         return False, "Component ID too long (max 64 chars)"
     return True, ""
 
-# ==================== RELIABILITY EVENT (Pydantic Model) ====================
+# ==================== RELIABILITY EVENT ====================
 class ReliabilityEvent(BaseModel):
     """
     Canonical reliability event with full backward compatibility.
-    
-    All canonical fields are optional and will be auto‑filled if missing.
-    Old fields (component, latency_p99, etc.) are accepted and automatically
-    mapped into the new structure. The model supports `.model_copy()` for
-    immutability, as expected by the engine.
+    Frozen to ensure immutability, as expected by the engine.
     """
     # Canonical fields (all optional with defaults)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -68,19 +59,24 @@ class ReliabilityEvent(BaseModel):
     metrics: Dict[str, float] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    # Legacy fields (accepted for compatibility, will be mapped)
-    component: Optional[str] = None
-    latency_p99: Optional[float] = None
-    error_rate: Optional[float] = None
-    throughput: Optional[int] = None
-    cpu_util: Optional[float] = None
-    memory_util: Optional[float] = None
-    source: Optional[str] = None
+    # Legacy fields (accepted for compatibility, but not stored directly)
+    # They are handled by the pre‑validator and converted into canonical fields.
+    component: Optional[str] = Field(None, exclude=True)
+    latency_p99: Optional[float] = Field(None, exclude=True)
+    error_rate: Optional[float] = Field(None, exclude=True)
+    throughput: Optional[int] = Field(None, exclude=True)
+    cpu_util: Optional[float] = Field(None, exclude=True)
+    memory_util: Optional[float] = Field(None, exclude=True)
+    source: Optional[str] = Field(None, exclude=True)
+
+    model_config = ConfigDict(
+        frozen=True,
+        arbitrary_types_allowed=True
+    )
 
     @field_validator('severity', mode='before')
     @classmethod
     def convert_severity(cls, v):
-        """Allow EventSeverity values and convert them to canonical Severity."""
         if isinstance(v, EventSeverity):
             mapping = {
                 EventSeverity.INFO: Severity.LOW,
@@ -92,33 +88,42 @@ class ReliabilityEvent(BaseModel):
             return mapping.get(v, Severity.LOW)
         return v
 
-    @model_validator(mode='after')
-    def sync_fields(self):
-        # Ensure component and service_name are consistent
-        if self.component and self.service_name == "unknown":
-            self.service_name = self.component
-        if self.service_name != "unknown" and self.component is None:
-            self.component = self.service_name
-        if self.service_name == "unknown" and self.component is None:
-            raise ValueError("Either component or service_name must be provided")
+    @model_validator(mode='before')
+    @classmethod
+    def transform_legacy_fields(cls, data: Any) -> Any:
+        """Pre‑validator: transform legacy input into canonical fields."""
+        if not isinstance(data, dict):
+            return data
 
-        # Populate metrics from legacy fields
-        if self.latency_p99 is not None:
-            self.metrics['latency_p99'] = self.latency_p99
-        if self.error_rate is not None:
-            self.metrics['error_rate'] = self.error_rate
-        if self.throughput is not None:
-            self.metrics['throughput'] = float(self.throughput)
-        if self.cpu_util is not None:
-            self.metrics['cpu_util'] = self.cpu_util
-        if self.memory_util is not None:
-            self.metrics['memory_util'] = self.memory_util
-        if self.source is not None:
-            self.metadata['source'] = self.source
+        # Handle component → service_name
+        if data.get('component') and not data.get('service_name'):
+            data['service_name'] = data['component']
 
-        return self
+        # Populate metrics from legacy numeric fields
+        metrics = {}
+        if 'latency_p99' in data:
+            metrics['latency_p99'] = data.pop('latency_p99')
+        if 'error_rate' in data:
+            metrics['error_rate'] = data.pop('error_rate')
+        if 'throughput' in data:
+            metrics['throughput'] = float(data.pop('throughput'))
+        if 'cpu_util' in data:
+            metrics['cpu_util'] = data.pop('cpu_util')
+        if 'memory_util' in data:
+            metrics['memory_util'] = data.pop('memory_util')
+        if metrics:
+            existing_metrics = data.get('metrics', {})
+            data['metrics'] = {**existing_metrics, **metrics}
 
-    # Property accessors for legacy fields (optional, for convenience)
+        # Populate metadata from legacy source
+        if 'source' in data:
+            source = data.pop('source')
+            existing_metadata = data.get('metadata', {})
+            data['metadata'] = {**existing_metadata, 'source': source}
+
+        return data
+
+    # Property accessors for legacy fields (optional)
     @property
     def latency_p99_prop(self) -> Optional[float]:
         return self.metrics.get('latency_p99')
@@ -143,9 +148,3 @@ class ReliabilityEvent(BaseModel):
     @property
     def source_prop(self) -> Optional[str]:
         return self.metadata.get('source')
-
-    class Config:
-        # Allow arbitrary types (like enums) in the model
-        arbitrary_types_allowed = True
-        # Keep the model frozen to match dataclass immutability expectations
-        frozen = True
