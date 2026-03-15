@@ -44,6 +44,17 @@ def validate_component_id(component: str) -> Tuple[bool, str]:
         return False, "Component ID too long (max 64 chars)"
     return True, ""
 
+# ==================== METRIC RESOLVER ====================
+def resolve_metric(event, name):
+    """
+    Safely retrieve a metric value from a ReliabilityEvent instance.
+    Handles properties correctly, returning the underlying value.
+    """
+    val = getattr(event, name, None)
+    if isinstance(val, property):
+        val = val.fget(event)
+    return val
+
 # ==================== RELIABILITY EVENT ====================
 class ReliabilityEvent(BaseModel):
     """
