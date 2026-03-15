@@ -4,7 +4,7 @@ import agentic_reliability_framework as arf
 
 def test_version():
     """Check that the package version is set correctly."""
-    assert arf.__version__ == "4.0.1+oss"
+    assert arf.__version__ == "4.2.0+oss"
 
 def test_imports():
     """Verify that key modules import without errors."""
