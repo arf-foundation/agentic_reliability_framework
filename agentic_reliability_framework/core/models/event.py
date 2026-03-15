@@ -99,31 +99,69 @@ class ReliabilityEvent(BaseModel):
         if data.get('component') and not data.get('service_name'):
             data['service_name'] = data['component']
 
-        # Populate metrics from legacy numeric fields
-        metrics = {}
+        # Populate metrics from legacy numeric fields, skipping None
+        metrics = data.get('metrics', {}).copy()
         if 'latency_p99' in data:
-            metrics['latency_p99'] = data.pop('latency_p99')
+            val = data.pop('latency_p99')
+            if val is not None:
+                metrics['latency_p99'] = val
         if 'error_rate' in data:
-            metrics['error_rate'] = data.pop('error_rate')
+            val = data.pop('error_rate')
+            if val is not None:
+                metrics['error_rate'] = val
         if 'throughput' in data:
-            metrics['throughput'] = float(data.pop('throughput'))
+            val = data.pop('throughput')
+            if val is not None:
+                metrics['throughput'] = float(val)
         if 'cpu_util' in data:
-            metrics['cpu_util'] = data.pop('cpu_util')
+            val = data.pop('cpu_util')
+            if val is not None:
+                metrics['cpu_util'] = val
         if 'memory_util' in data:
-            metrics['memory_util'] = data.pop('memory_util')
+            val = data.pop('memory_util')
+            if val is not None:
+                metrics['memory_util'] = val
         if metrics:
-            existing_metrics = data.get('metrics', {})
-            data['metrics'] = {**existing_metrics, **metrics}
+            data['metrics'] = metrics
 
         # Populate metadata from legacy source
         if 'source' in data:
             source = data.pop('source')
-            existing_metadata = data.get('metadata', {})
-            data['metadata'] = {**existing_metadata, 'source': source}
+            if source is not None:
+                existing_metadata = data.get('metadata', {})
+                data['metadata'] = {**existing_metadata, 'source': source}
 
         return data
 
-    # Property accessors for legacy fields (optional)
+    # ===== BACKWARD COMPATIBILITY ALIASES =====
+    # These expose legacy attributes expected by the runtime system.
+
+    @property
+    def component(self) -> str:
+        return self.service_name
+
+    @property
+    def latency_p99(self) -> Optional[float]:
+        return self.metrics.get("latency_p99")
+
+    @property
+    def error_rate(self) -> Optional[float]:
+        return self.metrics.get("error_rate")
+
+    @property
+    def throughput(self) -> Optional[int]:
+        val = self.metrics.get("throughput")
+        return int(val) if val is not None else None
+
+    @property
+    def cpu_util(self) -> Optional[float]:
+        return self.metrics.get("cpu_util")
+
+    @property
+    def memory_util(self) -> Optional[float]:
+        return self.metrics.get("memory_util")
+
+    # (Optional) Keep the property accessors for clarity
     @property
     def latency_p99_prop(self) -> Optional[float]:
         return self.metrics.get('latency_p99')
