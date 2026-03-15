@@ -17,7 +17,7 @@ import json
 import numpy as np
 from typing import Optional, Dict, Any, List, Tuple
 
-from agentic_reliability_framework.core.models.event import ReliabilityEvent, EventSeverity, HealingAction
+from agentic_reliability_framework.core.models.event import ReliabilityEvent, EventSeverity, HealingAction, resolve_metric
 from agentic_reliability_framework.core.governance.policy_engine import PolicyEngine
 from agentic_reliability_framework.runtime.analytics.anomaly import AdvancedAnomalyDetector
 from agentic_reliability_framework.runtime.analytics.predictive import BusinessImpactCalculator
@@ -107,6 +107,7 @@ class EnhancedReliabilityEngine:
         Returns:
             Dict with status, analysis results, and healing recommendations.
         """
+        # Resolve metrics for logging (use provided values, they are already numbers)
         logger.info(
             f"Processing event: component={component}, "
             f"latency={latency}ms, error_rate={error_rate*100:.1f}%"
@@ -244,10 +245,13 @@ class EnhancedReliabilityEngine:
         """
         try:
             is_anomaly = self.anomaly_detector.detect_anomaly(event)
+            # For details, we need resolved metric values
+            lat = resolve_metric(event, "latency_p99") or 0
+            err = resolve_metric(event, "error_rate") or 0
             details = {
-                'anomaly_score': float(event.latency_p99 > 300 or event.error_rate > 0.15),
-                'latency_anomaly': event.latency_p99 > 300,
-                'error_rate_anomaly': event.error_rate > 0.15,
+                'anomaly_score': float(lat > 300 or err > 0.15),
+                'latency_anomaly': lat > 300,
+                'error_rate_anomaly': err > 0.15,
             }
             logger.debug(f"Anomaly detection: is_anomaly={is_anomaly}")
             return is_anomaly, details
@@ -286,15 +290,15 @@ class EnhancedReliabilityEngine:
             hmc_contribution = {'hmc': 0.0}
             if self.hmc_learner.is_ready:
                 try:
-                    hmc_risk = self.hmc_learner.predict(
-                        {
-                            'latency_p99': event.latency_p99,
-                            'error_rate': event.error_rate,
-                            'throughput': event.throughput,
-                            'cpu_util': event.cpu_util or 0.0,
-                            'memory_util': event.memory_util or 0.0,
-                        }
-                    )
+                    # Prepare feature dict using resolved metrics
+                    feature_dict = {
+                        'latency_p99': resolve_metric(event, "latency_p99") or 0.0,
+                        'error_rate': resolve_metric(event, "error_rate") or 0.0,
+                        'throughput': resolve_metric(event, "throughput") or 0.0,
+                        'cpu_util': resolve_metric(event, "cpu_util") or 0.0,
+                        'memory_util': resolve_metric(event, "memory_util") or 0.0,
+                    }
+                    hmc_risk = self.hmc_learner.predict(feature_dict)
                     hmc_contribution['hmc'] = hmc_risk
                 except Exception as e:
                     logger.debug(f"HMC prediction failed: {e}")
@@ -470,12 +474,17 @@ class EnhancedReliabilityEngine:
         Returns:
             result dict with all analysis fields.
         """
+        # Resolve metrics for output
+        lat = resolve_metric(event, "latency_p99") or 0
+        err = resolve_metric(event, "error_rate") or 0
+        thru = resolve_metric(event, "throughput") or 0
+
         return {
             'timestamp': event.timestamp.isoformat(),
             'component': event.component,
-            'latency_p99': event.latency_p99,
-            'error_rate': event.error_rate,
-            'throughput': event.throughput,
+            'latency_p99': lat,
+            'error_rate': err,
+            'throughput': thru,
             'status': 'ANOMALY' if is_anomaly else 'NORMAL',
             'severity': severity.value,
             'is_anomaly': is_anomaly,
@@ -505,6 +514,13 @@ class EnhancedReliabilityEngine:
         Returns:
             enhanced result dict.
         """
+        # Resolve metrics for prompt
+        lat = resolve_metric(event, "latency_p99") or 0
+        err = resolve_metric(event, "error_rate") or 0
+        thru = resolve_metric(event, "throughput") or 0
+        cpu = resolve_metric(event, "cpu_util")
+        mem = resolve_metric(event, "memory_util")
+
         context_parts = [
             "INCIDENT SUMMARY:",
             f"Component: {event.component}",
@@ -512,14 +528,14 @@ class EnhancedReliabilityEngine:
             f"Severity: {result['severity']}",
             "",
             "METRICS:",
-            f"• Latency P99: {event.latency_p99}ms",
-            f"• Error Rate: {event.error_rate:.1%}",
-            f"• Throughput: {event.throughput} req/s",
+            f"• Latency P99: {lat}ms",
+            f"• Error Rate: {err:.1%}",
+            f"• Throughput: {thru} req/s",
         ]
-        if event.cpu_util:
-            context_parts.append(f"• CPU: {event.cpu_util:.1%}")
-        if event.memory_util:
-            context_parts.append(f"• Memory: {event.memory_util:.1%}")
+        if cpu:
+            context_parts.append(f"• CPU: {cpu:.1%}")
+        if mem:
+            context_parts.append(f"• Memory: {mem:.1%}")
         context_parts.append("")
         if result.get('multi_agent_analysis'):
             context_parts.append("AGENT ANALYSIS:")

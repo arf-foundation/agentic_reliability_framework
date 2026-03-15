@@ -9,6 +9,7 @@ from collections import OrderedDict
 from typing import Dict, List, Optional, Any
 
 from agentic_reliability_framework.core.models.event import HealingAction, ReliabilityEvent
+from agentic_reliability_framework.core.models.event import resolve_metric
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class PolicyEngine:
             metric = cond.metric
             op = cond.operator
             thresh = cond.threshold
-            val = getattr(event, metric, None)
+            val = resolve_metric(event, metric)
             if val is None:
                 return False
             if op == "gt":

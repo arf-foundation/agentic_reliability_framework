@@ -24,7 +24,6 @@ You may obtain a copy of the License at
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
- source /opt/conda/bin/activate /workspaces/agentic-reliability-framework/venv
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
@@ -184,6 +183,7 @@ class HealingIntent:
     - Partial execution support
     - Integration with infrastructure governance module
     - Full backward compatibility with old ARF patterns
+    - Rich Bayesian uncertainty and evidence provenance (v2.1.0)
 
     This is the clean boundary between OSS intelligence and Enterprise execution:
     - OSS creates HealingIntent through analysis (advisory only)
@@ -221,6 +221,51 @@ class HealingIntent:
     rag_similarity_score: Optional[float] = None
     source: IntentSource = IntentSource.OSS_ANALYSIS
 
+    # === BAYESIAN & UNCERTAINTY FIELDS (v2.1.0) ===
+    risk_contributions: Optional[Dict[str, float]] = None      # Breakdown of TotalRisk components
+    posterior_mean: Optional[float] = None                     # Raw Bayesian posterior mean
+    posterior_variance: Optional[float] = None                 # Variance of posterior
+    credible_interval_low: Optional[float] = None
+    credible_interval_high: Optional[float] = None
+    entropy: Optional[float] = None                            # Total entropy of answer (if applicable)
+    epistemic_uncertainty: Optional[float] = None              # Uncertainty due to evidence (0-1)
+    aleatoric_uncertainty: Optional[float] = None              # Inherent uncertainty
+    calibration_error: Optional[float] = None                  # Calibration metric
+    decision_margin: Optional[float] = None                    # Distance to decision boundary
+    confidence_calibrated: Optional[float] = None              # Calibrated confidence
+
+    # === EVIDENCE & PROVENANCE FIELDS (v2.1.0) ===
+    evidence_sources: Optional[List[str]] = None                # List of evidence IDs or descriptions
+    evidence_quality: Optional[float] = None                    # Aggregate quality score (0-1)
+    evidence_lift: Optional[float] = None                       # ΔL from evidence_lift module
+    contradiction_score: Optional[float] = None                 # From contradiction detector
+    semantic_entropy: Optional[float] = None                    # Entropy of semantic meaning
+    retrieval_quality: Optional[float] = None                   # Quality of RAG retrieval
+    provenance_chain: Optional[List[Dict[str, Any]]] = None    # Trace of reasoning steps
+    reasoning_trace_summary: Optional[str] = None               # Short summary of reasoning
+    supporting_signals: Optional[Dict[str, float]] = None       # Other positive signals
+    counter_signals: Optional[Dict[str, float]] = None          # Negative signals
+
+    # === HUMAN FACTORS FIELDS (v2.1.0) ===
+    cognitive_load_estimate: Optional[float] = None             # How complex the decision is (0-1)
+    ambiguity_score: Optional[float] = None                     # Ambiguity in the situation
+    operator_attention_required: Optional[bool] = None          # If true, flag for UI
+    explanation_depth: Optional[str] = None                     # "brief", "detailed", etc.
+    recommended_escalation_level: Optional[str] = None          # e.g., "team_lead", "admin"
+    trust_level: Optional[float] = None                         # System's trust in the decision
+    overconfidence_risk: Optional[float] = None                 # Risk of being overconfident
+    clarity_score: Optional[float] = None                       # How clear the situation is
+    actionability_score: Optional[float] = None                 # How actionable the recommendation is
+
+    # === LEARNING HOOKS (v2.1.0) ===
+    outcome_label: Optional[str] = None                         # e.g., "success", "failure"
+    feedback_expected: Optional[bool] = None                    # Whether human feedback is desired
+    feedback_schema: Optional[Dict[str, Any]] = None            # Schema for expected feedback
+    update_recommendation: Optional[bool] = None                # Whether model should update
+    posterior_update_hint: Optional[Dict[str, float]] = None    # Hints for Bayesian update
+    replay_key: Optional[str] = None                            # Key for replaying decision
+    experiment_tags: Optional[List[str]] = None                 # Tags for A/B tests
+
     # === IMMUTABLE IDENTIFIERS ===
     intent_id: str = field(default_factory=lambda: f"intent_{uuid.uuid4().hex[:16]}")
     created_at: float = field(default_factory=time.time)
@@ -254,7 +299,7 @@ class HealingIntent:
     MAX_JUSTIFICATION_LENGTH: ClassVar[int] = 5000
     MAX_PARAMETERS_SIZE: ClassVar[int] = 100
     MAX_SIMILAR_INCIDENTS: ClassVar[int] = MAX_SIMILARITY_CACHE
-    VERSION: ClassVar[str] = "2.0.0"  # Major bump for probabilistic features
+    VERSION: ClassVar[str] = "2.1.0"  # Major bump for probabilistic & evidence features
 
     def __post_init__(self) -> None:
         """Validate HealingIntent after initialization with OSS boundaries"""
@@ -444,6 +489,13 @@ class HealingIntent:
                 "confidence_basis": self._get_confidence_basis(),
                 "learning_applied": False,
                 "learning_reason": "OSS advisory mode does not persist or learn from outcomes",
+                # v2.1.0 fields (optional)
+                "risk_contributions": self.risk_contributions,
+                "epistemic_uncertainty": self.epistemic_uncertainty,
+                "evidence_lift": self.evidence_lift,
+                "contradiction_score": self.contradiction_score,
+                "ambiguity_score": self.ambiguity_score,
+                "decision_margin": self.decision_margin,
             },
 
             # Upgrade information
@@ -460,7 +512,9 @@ class HealingIntent:
                 "24_7_support",
                 "probabilistic_confidence",
                 "risk_analytics",
-                "cost_optimization"
+                "cost_optimization",
+                "uncertainty_quantification",
+                "evidence_provenance",
             ]
         }
 
@@ -497,12 +551,25 @@ class HealingIntent:
 
         # Remove OSS context if not needed
         if not include_oss_context:
-            data.pop("reasoning_chain", None)
-            data.pop("similar_incidents", None)
-            data.pop("rag_similarity_score", None)
-            data.pop("decision_tree", None)
-            data.pop("alternative_actions", None)
-            data.pop("infrastructure_intent", None)
+            # Core OSS‑only fields
+            oss_only_fields = [
+                "reasoning_chain", "similar_incidents", "rag_similarity_score",
+                "decision_tree", "alternative_actions", "infrastructure_intent",
+                # v2.1.0 fields that are purely internal
+                "posterior_mean", "posterior_variance", "credible_interval_low", "credible_interval_high",
+                "entropy", "epistemic_uncertainty", "aleatoric_uncertainty", "calibration_error",
+                "confidence_calibrated", "evidence_sources", "evidence_quality",
+                "semantic_entropy", "retrieval_quality", "provenance_chain",
+                "reasoning_trace_summary", "supporting_signals", "counter_signals",
+                "cognitive_load_estimate", "operator_attention_required",
+                "explanation_depth", "recommended_escalation_level", "trust_level",
+                "overconfidence_risk", "clarity_score", "actionability_score",
+                "outcome_label", "feedback_expected", "feedback_schema",
+                "update_recommendation", "posterior_update_hint", "replay_key",
+                "experiment_tags"
+            ]
+            for field in oss_only_fields:
+                data.pop(field, None)
 
         # Add computed properties
         data["deterministic_id"] = self.deterministic_id
@@ -552,6 +619,45 @@ class HealingIntent:
             decision_tree=self.decision_tree,
             alternative_actions=self.alternative_actions,
             risk_profile=self.risk_profile,
+
+            # v2.1.0 fields (copied)
+            risk_contributions=self.risk_contributions,
+            posterior_mean=self.posterior_mean,
+            posterior_variance=self.posterior_variance,
+            credible_interval_low=self.credible_interval_low,
+            credible_interval_high=self.credible_interval_high,
+            entropy=self.entropy,
+            epistemic_uncertainty=self.epistemic_uncertainty,
+            aleatoric_uncertainty=self.aleatoric_uncertainty,
+            calibration_error=self.calibration_error,
+            decision_margin=self.decision_margin,
+            confidence_calibrated=self.confidence_calibrated,
+            evidence_sources=self.evidence_sources,
+            evidence_quality=self.evidence_quality,
+            evidence_lift=self.evidence_lift,
+            contradiction_score=self.contradiction_score,
+            semantic_entropy=self.semantic_entropy,
+            retrieval_quality=self.retrieval_quality,
+            provenance_chain=self.provenance_chain,
+            reasoning_trace_summary=self.reasoning_trace_summary,
+            supporting_signals=self.supporting_signals,
+            counter_signals=self.counter_signals,
+            cognitive_load_estimate=self.cognitive_load_estimate,
+            ambiguity_score=self.ambiguity_score,
+            operator_attention_required=self.operator_attention_required,
+            explanation_depth=self.explanation_depth,
+            recommended_escalation_level=self.recommended_escalation_level,
+            trust_level=self.trust_level,
+            overconfidence_risk=self.overconfidence_risk,
+            clarity_score=self.clarity_score,
+            actionability_score=self.actionability_score,
+            outcome_label=self.outcome_label,
+            feedback_expected=self.feedback_expected,
+            feedback_schema=self.feedback_schema,
+            update_recommendation=self.update_recommendation,
+            posterior_update_hint=self.posterior_update_hint,
+            replay_key=self.replay_key,
+            experiment_tags=self.experiment_tags,
 
             # OSS context (copied)
             reasoning_chain=self.reasoning_chain,
@@ -644,6 +750,44 @@ class HealingIntent:
             decision_tree=self.decision_tree,
             alternative_actions=self.alternative_actions,
             risk_profile=self.risk_profile,
+            # v2.1.0 fields
+            risk_contributions=self.risk_contributions,
+            posterior_mean=self.posterior_mean,
+            posterior_variance=self.posterior_variance,
+            credible_interval_low=self.credible_interval_low,
+            credible_interval_high=self.credible_interval_high,
+            entropy=self.entropy,
+            epistemic_uncertainty=self.epistemic_uncertainty,
+            aleatoric_uncertainty=self.aleatoric_uncertainty,
+            calibration_error=self.calibration_error,
+            decision_margin=self.decision_margin,
+            confidence_calibrated=self.confidence_calibrated,
+            evidence_sources=self.evidence_sources,
+            evidence_quality=self.evidence_quality,
+            evidence_lift=self.evidence_lift,
+            contradiction_score=self.contradiction_score,
+            semantic_entropy=self.semantic_entropy,
+            retrieval_quality=self.retrieval_quality,
+            provenance_chain=self.provenance_chain,
+            reasoning_trace_summary=self.reasoning_trace_summary,
+            supporting_signals=self.supporting_signals,
+            counter_signals=self.counter_signals,
+            cognitive_load_estimate=self.cognitive_load_estimate,
+            ambiguity_score=self.ambiguity_score,
+            operator_attention_required=self.operator_attention_required,
+            explanation_depth=self.explanation_depth,
+            recommended_escalation_level=self.recommended_escalation_level,
+            trust_level=self.trust_level,
+            overconfidence_risk=self.overconfidence_risk,
+            clarity_score=self.clarity_score,
+            actionability_score=self.actionability_score,
+            outcome_label=self.outcome_label,
+            feedback_expected=self.feedback_expected,
+            feedback_schema=self.feedback_schema,
+            update_recommendation=self.update_recommendation,
+            posterior_update_hint=self.posterior_update_hint,
+            replay_key=self.replay_key,
+            experiment_tags=self.experiment_tags,
             reasoning_chain=self.reasoning_chain,
             similar_incidents=self.similar_incidents,
             rag_similarity_score=self.rag_similarity_score,
@@ -691,6 +835,44 @@ class HealingIntent:
             decision_tree=self.decision_tree,
             alternative_actions=self.alternative_actions,
             risk_profile=self.risk_profile,
+            # v2.1.0 fields
+            risk_contributions=self.risk_contributions,
+            posterior_mean=self.posterior_mean,
+            posterior_variance=self.posterior_variance,
+            credible_interval_low=self.credible_interval_low,
+            credible_interval_high=self.credible_interval_high,
+            entropy=self.entropy,
+            epistemic_uncertainty=self.epistemic_uncertainty,
+            aleatoric_uncertainty=self.aleatoric_uncertainty,
+            calibration_error=self.calibration_error,
+            decision_margin=self.decision_margin,
+            confidence_calibrated=self.confidence_calibrated,
+            evidence_sources=self.evidence_sources,
+            evidence_quality=self.evidence_quality,
+            evidence_lift=self.evidence_lift,
+            contradiction_score=self.contradiction_score,
+            semantic_entropy=self.semantic_entropy,
+            retrieval_quality=self.retrieval_quality,
+            provenance_chain=self.provenance_chain,
+            reasoning_trace_summary=self.reasoning_trace_summary,
+            supporting_signals=self.supporting_signals,
+            counter_signals=self.counter_signals,
+            cognitive_load_estimate=self.cognitive_load_estimate,
+            ambiguity_score=self.ambiguity_score,
+            operator_attention_required=self.operator_attention_required,
+            explanation_depth=self.explanation_depth,
+            recommended_escalation_level=self.recommended_escalation_level,
+            trust_level=self.trust_level,
+            overconfidence_risk=self.overconfidence_risk,
+            clarity_score=self.clarity_score,
+            actionability_score=self.actionability_score,
+            outcome_label=self.outcome_label,
+            feedback_expected=self.feedback_expected,
+            feedback_schema=self.feedback_schema,
+            update_recommendation=self.update_recommendation,
+            posterior_update_hint=self.posterior_update_hint,
+            replay_key=self.replay_key,
+            experiment_tags=self.experiment_tags,
             reasoning_chain=self.reasoning_chain,
             similar_incidents=self.similar_incidents,
             rag_similarity_score=self.rag_similarity_score,
@@ -738,6 +920,44 @@ class HealingIntent:
             decision_tree=self.decision_tree,
             alternative_actions=self.alternative_actions,
             risk_profile=self.risk_profile,
+            # v2.1.0 fields
+            risk_contributions=self.risk_contributions,
+            posterior_mean=self.posterior_mean,
+            posterior_variance=self.posterior_variance,
+            credible_interval_low=self.credible_interval_low,
+            credible_interval_high=self.credible_interval_high,
+            entropy=self.entropy,
+            epistemic_uncertainty=self.epistemic_uncertainty,
+            aleatoric_uncertainty=self.aleatoric_uncertainty,
+            calibration_error=self.calibration_error,
+            decision_margin=self.decision_margin,
+            confidence_calibrated=self.confidence_calibrated,
+            evidence_sources=self.evidence_sources,
+            evidence_quality=self.evidence_quality,
+            evidence_lift=self.evidence_lift,
+            contradiction_score=self.contradiction_score,
+            semantic_entropy=self.semantic_entropy,
+            retrieval_quality=self.retrieval_quality,
+            provenance_chain=self.provenance_chain,
+            reasoning_trace_summary=self.reasoning_trace_summary,
+            supporting_signals=self.supporting_signals,
+            counter_signals=self.counter_signals,
+            cognitive_load_estimate=self.cognitive_load_estimate,
+            ambiguity_score=self.ambiguity_score,
+            operator_attention_required=self.operator_attention_required,
+            explanation_depth=self.explanation_depth,
+            recommended_escalation_level=self.recommended_escalation_level,
+            trust_level=self.trust_level,
+            overconfidence_risk=self.overconfidence_risk,
+            clarity_score=self.clarity_score,
+            actionability_score=self.actionability_score,
+            outcome_label=self.outcome_label,
+            feedback_expected=self.feedback_expected,
+            feedback_schema=self.feedback_schema,
+            update_recommendation=self.update_recommendation,
+            posterior_update_hint=self.posterior_update_hint,
+            replay_key=self.replay_key,
+            experiment_tags=self.experiment_tags,
             reasoning_chain=self.reasoning_chain,
             similar_incidents=self.similar_incidents,
             rag_similarity_score=self.rag_similarity_score,
@@ -1038,6 +1258,44 @@ class HealingIntent:
             "oss_edition": self.oss_edition,
             "is_oss_advisory": self.is_oss_advisory,
             "infrastructure_intent": self.infrastructure_intent,
+            # v2.1.0 fields (all OSS context)
+            "risk_contributions": self.risk_contributions,
+            "posterior_mean": self.posterior_mean,
+            "posterior_variance": self.posterior_variance,
+            "credible_interval_low": self.credible_interval_low,
+            "credible_interval_high": self.credible_interval_high,
+            "entropy": self.entropy,
+            "epistemic_uncertainty": self.epistemic_uncertainty,
+            "aleatoric_uncertainty": self.aleatoric_uncertainty,
+            "calibration_error": self.calibration_error,
+            "decision_margin": self.decision_margin,
+            "confidence_calibrated": self.confidence_calibrated,
+            "evidence_sources": self.evidence_sources,
+            "evidence_quality": self.evidence_quality,
+            "evidence_lift": self.evidence_lift,
+            "contradiction_score": self.contradiction_score,
+            "semantic_entropy": self.semantic_entropy,
+            "retrieval_quality": self.retrieval_quality,
+            "provenance_chain": self.provenance_chain,
+            "reasoning_trace_summary": self.reasoning_trace_summary,
+            "supporting_signals": self.supporting_signals,
+            "counter_signals": self.counter_signals,
+            "cognitive_load_estimate": self.cognitive_load_estimate,
+            "ambiguity_score": self.ambiguity_score,
+            "operator_attention_required": self.operator_attention_required,
+            "explanation_depth": self.explanation_depth,
+            "recommended_escalation_level": self.recommended_escalation_level,
+            "trust_level": self.trust_level,
+            "overconfidence_risk": self.overconfidence_risk,
+            "clarity_score": self.clarity_score,
+            "actionability_score": self.actionability_score,
+            "outcome_label": self.outcome_label,
+            "feedback_expected": self.feedback_expected,
+            "feedback_schema": self.feedback_schema,
+            "update_recommendation": self.update_recommendation,
+            "posterior_update_hint": self.posterior_update_hint,
+            "replay_key": self.replay_key,
+            "experiment_tags": self.experiment_tags,
         }
 
     def get_execution_summary(self) -> Dict[str, Any]:
@@ -1063,6 +1321,13 @@ class HealingIntent:
             "source": self.source.value,
             "policy_violations_count": len(self.policy_violations) if self.policy_violations else 0,
             "confidence_basis": self._get_confidence_basis(),
+            # v2.1.0 summary fields (optional, safe for external)
+            "epistemic_uncertainty": self.epistemic_uncertainty,
+            "ambiguity_score": self.ambiguity_score,
+            "evidence_lift": self.evidence_lift,
+            "contradiction_score": self.contradiction_score,
+            "decision_margin": self.decision_margin,
+            "operator_attention_required": self.operator_attention_required,
         }
 
         if self.executed_at:
@@ -1119,12 +1384,13 @@ class HealingIntentSerializer:
     - Risk and cost field serialization
     - Backward compatibility with v1.x
     - OSS/Enterprise edition detection
+    - v2.1.0 fields (Bayesian uncertainty, evidence provenance, human factors)
     """
 
-    SCHEMA_VERSION: ClassVar[str] = "2.0.0"
+    SCHEMA_VERSION: ClassVar[str] = "2.1.0"
 
     @classmethod
-    def serialize(cls, intent: HealingIntent, version: str = "2.0.0") -> Dict[str, Any]:
+    def serialize(cls, intent: HealingIntent, version: str = "2.1.0") -> Dict[str, Any]:
         """
         Serialize HealingIntent with versioning
 
@@ -1139,11 +1405,49 @@ class HealingIntentSerializer:
             SerializationError: If serialization fails
         """
         try:
-            if version == "2.0.0":
+            if version == "2.1.0":
                 return {
                     "version": version,
                     "schema_version": cls.SCHEMA_VERSION,
                     "data": intent.to_dict(include_oss_context=True),
+                    "metadata": {
+                        "serialized_at": time.time(),
+                        "deterministic_id": intent.deterministic_id,
+                        "is_executable": intent.is_executable,
+                        "is_oss_advisory": intent.is_oss_advisory,
+                        "requires_enterprise_upgrade": intent.requires_enterprise_upgrade,
+                        "oss_edition": intent.oss_edition,
+                        "has_probabilistic_confidence": intent.confidence_distribution is not None,
+                        "has_risk_assessment": intent.risk_score is not None,
+                        "has_cost_projection": intent.cost_projection is not None,
+                        "has_epistemic_uncertainty": intent.epistemic_uncertainty is not None,
+                        "has_evidence_lift": intent.evidence_lift is not None,
+                    }
+                }
+            elif version == "2.0.0":
+                # Backward compatibility with v2.0.0 (remove v2.1.0 fields)
+                data = intent.to_dict(include_oss_context=True)
+                v2_1_fields = [
+                    "risk_contributions", "posterior_mean", "posterior_variance",
+                    "credible_interval_low", "credible_interval_high", "entropy",
+                    "epistemic_uncertainty", "aleatoric_uncertainty", "calibration_error",
+                    "decision_margin", "confidence_calibrated", "evidence_sources",
+                    "evidence_quality", "evidence_lift", "contradiction_score",
+                    "semantic_entropy", "retrieval_quality", "provenance_chain",
+                    "reasoning_trace_summary", "supporting_signals", "counter_signals",
+                    "cognitive_load_estimate", "ambiguity_score", "operator_attention_required",
+                    "explanation_depth", "recommended_escalation_level", "trust_level",
+                    "overconfidence_risk", "clarity_score", "actionability_score",
+                    "outcome_label", "feedback_expected", "feedback_schema",
+                    "update_recommendation", "posterior_update_hint", "replay_key",
+                    "experiment_tags"
+                ]
+                for field in v2_1_fields:
+                    data.pop(field, None)
+                return {
+                    "version": version,
+                    "schema_version": "2.0.0",
+                    "data": data,
                     "metadata": {
                         "serialized_at": time.time(),
                         "deterministic_id": intent.deterministic_id,
@@ -1160,7 +1464,7 @@ class HealingIntentSerializer:
                 # Backward compatibility with v1.x
                 data = intent.to_dict(include_oss_context=True)
 
-                # Remove v2.0.0 fields for compatibility
+                # Remove v2.0.0 and v2.1.0 fields
                 data.pop("confidence_distribution", None)
                 data.pop("risk_score", None)
                 data.pop("risk_factors", None)
@@ -1176,7 +1480,25 @@ class HealingIntentSerializer:
                 data.pop("infrastructure_intent_id", None)
                 data.pop("policy_violations", None)
                 data.pop("infrastructure_intent", None)
-                data.pop("confidence_interval", None)  # <-- ADDED: remove computed confidence_interval
+                data.pop("confidence_interval", None)
+                # v2.1.0 fields
+                v2_1_fields = [
+                    "risk_contributions", "posterior_mean", "posterior_variance",
+                    "credible_interval_low", "credible_interval_high", "entropy",
+                    "epistemic_uncertainty", "aleatoric_uncertainty", "calibration_error",
+                    "decision_margin", "confidence_calibrated", "evidence_sources",
+                    "evidence_quality", "evidence_lift", "contradiction_score",
+                    "semantic_entropy", "retrieval_quality", "provenance_chain",
+                    "reasoning_trace_summary", "supporting_signals", "counter_signals",
+                    "cognitive_load_estimate", "ambiguity_score", "operator_attention_required",
+                    "explanation_depth", "recommended_escalation_level", "trust_level",
+                    "overconfidence_risk", "clarity_score", "actionability_score",
+                    "outcome_label", "feedback_expected", "feedback_schema",
+                    "update_recommendation", "posterior_update_hint", "replay_key",
+                    "experiment_tags"
+                ]
+                for field in v2_1_fields:
+                    data.pop(field, None)
 
                 # Ensure status is compatible
                 if data.get("status") in [
@@ -1224,7 +1546,7 @@ class HealingIntentSerializer:
             version = data.get("version", "1.0.0")
             intent_data = data.get("data", data)  # Handle both wrapped and unwrapped
 
-            if version in ["2.0.0", "1.1.0", "1.0.0"]:
+            if version in ["2.1.0", "2.0.0", "1.1.0", "1.0.0"]:
                 # Handle version differences
                 if version.startswith("1."):
                     # Add default values for v2 fields
@@ -1243,6 +1565,92 @@ class HealingIntentSerializer:
                     intent_data.setdefault("infrastructure_intent_id", None)
                     intent_data.setdefault("policy_violations", [])
                     intent_data.setdefault("infrastructure_intent", None)
+                    # Add v2.1.0 defaults for v1.x
+                    v2_1_defaults = {
+                        "risk_contributions": None,
+                        "posterior_mean": None,
+                        "posterior_variance": None,
+                        "credible_interval_low": None,
+                        "credible_interval_high": None,
+                        "entropy": None,
+                        "epistemic_uncertainty": None,
+                        "aleatoric_uncertainty": None,
+                        "calibration_error": None,
+                        "decision_margin": None,
+                        "confidence_calibrated": None,
+                        "evidence_sources": None,
+                        "evidence_quality": None,
+                        "evidence_lift": None,
+                        "contradiction_score": None,
+                        "semantic_entropy": None,
+                        "retrieval_quality": None,
+                        "provenance_chain": None,
+                        "reasoning_trace_summary": None,
+                        "supporting_signals": None,
+                        "counter_signals": None,
+                        "cognitive_load_estimate": None,
+                        "ambiguity_score": None,
+                        "operator_attention_required": None,
+                        "explanation_depth": None,
+                        "recommended_escalation_level": None,
+                        "trust_level": None,
+                        "overconfidence_risk": None,
+                        "clarity_score": None,
+                        "actionability_score": None,
+                        "outcome_label": None,
+                        "feedback_expected": None,
+                        "feedback_schema": None,
+                        "update_recommendation": None,
+                        "posterior_update_hint": None,
+                        "replay_key": None,
+                        "experiment_tags": None,
+                    }
+                    for key, val in v2_1_defaults.items():
+                        intent_data.setdefault(key, val)
+
+                elif version == "2.0.0":
+                    # Add v2.1.0 defaults for v2.0.0
+                    v2_1_defaults = {
+                        "risk_contributions": None,
+                        "posterior_mean": None,
+                        "posterior_variance": None,
+                        "credible_interval_low": None,
+                        "credible_interval_high": None,
+                        "entropy": None,
+                        "epistemic_uncertainty": None,
+                        "aleatoric_uncertainty": None,
+                        "calibration_error": None,
+                        "decision_margin": None,
+                        "confidence_calibrated": None,
+                        "evidence_sources": None,
+                        "evidence_quality": None,
+                        "evidence_lift": None,
+                        "contradiction_score": None,
+                        "semantic_entropy": None,
+                        "retrieval_quality": None,
+                        "provenance_chain": None,
+                        "reasoning_trace_summary": None,
+                        "supporting_signals": None,
+                        "counter_signals": None,
+                        "cognitive_load_estimate": None,
+                        "ambiguity_score": None,
+                        "operator_attention_required": None,
+                        "explanation_depth": None,
+                        "recommended_escalation_level": None,
+                        "trust_level": None,
+                        "overconfidence_risk": None,
+                        "clarity_score": None,
+                        "actionability_score": None,
+                        "outcome_label": None,
+                        "feedback_expected": None,
+                        "feedback_schema": None,
+                        "update_recommendation": None,
+                        "posterior_update_hint": None,
+                        "replay_key": None,
+                        "experiment_tags": None,
+                    }
+                    for key, val in v2_1_defaults.items():
+                        intent_data.setdefault(key, val)
 
                 return HealingIntent.from_dict(intent_data)
             else:

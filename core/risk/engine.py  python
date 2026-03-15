@@ -1,0 +1,66 @@
+from typing import List, Tuple, Optional
+from ..models.event import ReliabilityEvent
+from ..models.outcome import IncidentOutcome
+
+class RiskEngine:
+    def __init__(self, calibration_constant: float = 10.0):
+        self.c = calibration_constant
+
+    def compute_base_risk(self, event: ReliabilityEvent) -> float:
+        """Base Bayesian risk (conjugate priors)."""
+        # Existing logic from BayesianRiskEngine
+        ...
+
+    def compute_memory_risk(self, similar_events: List[Tuple[ReliabilityEvent, float]],
+                            outcomes: List[Optional[IncidentOutcome]]) -> float:
+        """
+        Derive risk from historical outcomes of similar events.
+        If outcomes are unavailable, fallback to a neutral value (0.5).
+        """
+        successes = 0
+        total = 0
+        for evt, score in similar_events:
+            # find corresponding outcome for this event
+            outcome = next((o for o in outcomes if o and o.event_id == evt.id), None)
+            if outcome and outcome.resolved:
+                successes += score   # weight by similarity
+                total += score
+            elif outcome:
+                total += score
+        if total == 0:
+            return 0.5   # neutral
+        return 1.0 - (successes / total)
+
+    def compute_risk(self, event: ReliabilityEvent,
+                     memory_context: Optional[dict] = None) -> dict:
+        """
+        Returns a dict with:
+          - risk_score: final blended risk
+          - base_risk
+          - memory_risk
+          - weight
+          - similar_events (list of (event_id, similarity))
+          - confidence: some measure (e.g., 1 - uncertainty)
+        """
+        base = self.compute_base_risk(event)
+
+        if memory_context and memory_context.get("similar_events"):
+            similar = memory_context["similar_events"]
+            outcomes = memory_context.get("outcomes", [])
+            n = len(similar)
+            w = n / (n + self.c) if n > 0 else 0.0
+            mem_risk = self.compute_memory_risk(similar, outcomes)
+            final = w * base + (1 - w) * mem_risk
+        else:
+            w = 0.0
+            mem_risk = None
+            final = base
+
+        return {
+            "risk_score": final,
+            "base_risk": base,
+            "memory_risk": mem_risk,
+            "weight": w,
+            "similar_events": [(evt.id, sim) for evt, sim in (memory_context.get("similar_events", []))] if memory_context else [],
+            "confidence": 1.0 - (event.metrics.get("uncertainty", 0.0))   # placeholder
+        }

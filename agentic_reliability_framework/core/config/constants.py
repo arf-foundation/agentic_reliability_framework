@@ -81,6 +81,10 @@ MAX_COST_PROJECTIONS: Final[int] = 5     # Maximum number of cost projection sce
 MAX_DECISION_TREE_DEPTH: Final[int] = 5  # Maximum depth of decision tree for explanation
 MAX_ALTERNATIVE_ACTIONS: Final[int] = 3  # Maximum number of alternative actions to consider
 
+# === DETERMINISTIC PROBABILITY THRESHOLDS ===
+DPT_LOW: Final[float] = 0.2    # Below this, approve
+DPT_HIGH: Final[float] = 0.8   # Above this, deny
+
 # ==================== OPERATIONAL THRESHOLDS ====================
 LATENCY_WARNING: Final[float] = 150.0
 LATENCY_CRITICAL: Final[float] = 300.0
@@ -591,6 +595,10 @@ __all__ = [
     "MAX_COST_PROJECTIONS",
     "MAX_DECISION_TREE_DEPTH",
     "MAX_ALTERNATIVE_ACTIONS",
+    
+    # === DETERMINISTIC PROBABILITY THRESHOLDS ===
+    "DPT_LOW",
+    "DPT_HIGH",
     
     # === OPERATIONAL THRESHOLDS ===
     "LATENCY_WARNING",
