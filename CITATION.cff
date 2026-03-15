@@ -5,7 +5,7 @@ authors:
     given-names: "Juan"
 title: "Agentic Reliability Framework (ARF)"
 version: "4.0.1+oss"
-date-released: 2026-03-07  # approximate date of the v4.0.1+oss release; adjust if needed
+date-released: 2026-03-07 
 url: "https://github.com/arf-foundation/agentic-reliability-framework"
 repository-code: "https://github.com/arf-foundation/agentic-reliability-framework"
 license: "Apache-2.0"
