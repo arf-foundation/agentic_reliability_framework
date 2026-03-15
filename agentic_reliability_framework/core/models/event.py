@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
@@ -5,14 +6,14 @@ from enum import Enum
 from pydantic import BaseModel
 
 # ==================== ENUMS ====================
-# New canonical Severity (for ReliabilityEvent)
+# New canonical Severity
 class Severity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
-# Backward compatibility: old EventSeverity (used in tests and other modules)
+# Backward compatibility: old EventSeverity
 class EventSeverity(str, Enum):
     INFO = "info"
     WARNING = "warning"
@@ -53,27 +54,23 @@ def validate_component_id(component: str) -> Tuple[bool, str]:
 @dataclass
 class ReliabilityEvent:
     """
-    Canonical reliability event.
+    Canonical reliability event with full backward compatibility.
     
-    For backward compatibility, this class also accepts the old fields
-    (component, latency_p99, error_rate, throughput, cpu_util, memory_util, source)
-    and stores them appropriately.
-    
-    - `component` is an alias for `service_name` (they will be kept in sync).
-    - Other numeric fields are placed into the `metrics` dictionary.
-    - `source` is stored in `metadata`.
+    All canonical fields are optional and will be auto‑filled if missing.
+    Old fields (component, latency_p99, etc.) are accepted and mapped
+    into the new structure.
     """
-    # Canonical fields
-    id: str
-    timestamp: datetime
-    service_name: str                # primary component identifier
-    event_type: str
-    severity: Severity
-    metrics: Dict[str, float]         # e.g., latency, error_rate, cpu
+    # Canonical fields (all optional with defaults)
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    service_name: str = "unknown"
+    event_type: str = "unknown"
+    severity: Severity = Severity.LOW
+    metrics: Dict[str, float] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    # Backward compatibility fields (optional, set automatically)
-    component: Optional[str] = None   # alias for service_name
+    # Old fields (accepted for compatibility)
+    component: Optional[str] = None
     latency_p99: Optional[float] = None
     error_rate: Optional[float] = None
     throughput: Optional[int] = None
@@ -82,15 +79,30 @@ class ReliabilityEvent:
     source: Optional[str] = None
 
     def __post_init__(self):
-        # Ensure component and service_name are consistent
-        if self.component is None and self.service_name:
-            self.component = self.service_name
-        if self.service_name is None and self.component:
+        # Convert severity if it's an EventSeverity
+        if isinstance(self.severity, EventSeverity):
+            # Map EventSeverity to Severity
+            mapping = {
+                EventSeverity.INFO: Severity.LOW,
+                EventSeverity.WARNING: Severity.MEDIUM,
+                EventSeverity.HIGH: Severity.HIGH,
+                EventSeverity.ERROR: Severity.HIGH,
+                EventSeverity.CRITICAL: Severity.CRITICAL,
+            }
+            self.severity = mapping.get(self.severity, Severity.LOW)
+
+        # If component is provided but service_name is not, set service_name
+        if self.component and self.service_name == "unknown":
             self.service_name = self.component
-        if self.component is None and self.service_name is None:
+        # If service_name is provided but component is not, set component
+        if self.service_name != "unknown" and self.component is None:
+            self.component = self.service_name
+
+        # Ensure both are set (if neither, raise error)
+        if self.service_name == "unknown" and self.component is None:
             raise ValueError("Either component or service_name must be provided")
 
-        # Store legacy numeric fields into metrics (if provided)
+        # Map old metric fields into metrics dict (only if they are not None)
         if self.latency_p99 is not None:
             self.metrics['latency_p99'] = self.latency_p99
         if self.error_rate is not None:
@@ -102,11 +114,11 @@ class ReliabilityEvent:
         if self.memory_util is not None:
             self.metrics['memory_util'] = self.memory_util
 
-        # Store source in metadata if provided
+        # Map source into metadata
         if self.source is not None:
             self.metadata['source'] = self.source
 
-    # For easier access to the legacy fields as properties
+    # Property accessors for old fields (so code that uses them directly still works)
     @property
     def latency_p99_prop(self) -> Optional[float]:
         return self.metrics.get('latency_p99')
