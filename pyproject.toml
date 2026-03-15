@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-reliability-framework"
-version = "4.0.1+oss"
+version = "4.2.0+oss"
 description = "Agentic Reliability Framework - OSS Edition"
 readme = "README.md"
 authors = [
@@ -27,8 +27,8 @@ dependencies = [
     "anthropic>=0.8.1",
     "pandas>=2.0.0",
     "scikit-learn>=1.0.0",
-    "faiss-cpu>=1.7.0",               # Added for memory
-    "sentence-transformers>=2.2.0",    # Added for embeddings
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 [project.urls]
