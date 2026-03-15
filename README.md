@@ -20,6 +20,14 @@ Powered by **Bayesian probabilistic models** (conjugate priors + HMC sampling), 
 
 This repository contains the **OSS core** for inference and advisory analysis. Enterprise customers layer enforcement, audit trails, and proprietary safety heuristics on top.
 
+## 🆕 What's New in v4.2.0 (March 2026)
+
+- **Canonical governance loop** – a single entry point that orchestrates policy, cost, reliability signals, and Bayesian risk into a comprehensive `HealingIntent`.
+- **Expanded `HealingIntent`** – now includes 30+ fields for Bayesian uncertainty (`posterior_mean`, `credible_interval`), evidence provenance (`evidence_lift`, `contradiction_score`), and human factors (`ambiguity_score`, `operator_attention_required`). Fully backward‑compatible.
+- **Deterministic Probability Thresholds (DPT)** – new constants `DPT_LOW` (0.2) and `DPT_HIGH` (0.8) for clear approve/deny/escalate decisions.
+- **Backward‑compatible event model** – `ReliabilityEvent` now accepts legacy fields (`component`, `latency_p99`, etc.) and maps them to the canonical `metrics` dictionary, ensuring existing code works without changes.
+- **Improved test coverage** – 50% overall, with critical paths at >80%.
+- 
 ### Key Insight: Deterministic Probability Thresholding (DPT)
 
 Instead of credible intervals, p-values, or fuzzy logic, ARF uses **transparent thresholds**:
