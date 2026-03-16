@@ -1,6 +1,19 @@
+# virtual environments
+.venv/
 venv/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# python cache
 __pycache__/
 *.pyc
-*.egg-info/
-dist/
+
+# backup files
+*.bak
+
+# test coverage
 .coverage
+htmlcov/
