@@ -1,9 +1,0 @@
-pydantic>=2.0
-numpy
-pyyaml
-circuitbreaker>=2.0.0
-pymc>=5.0.0
-arviz>=0.15.0
-anthropic>=0.8.1
-pandas>=2.0.0
-scikit-learn>=1.0.0
