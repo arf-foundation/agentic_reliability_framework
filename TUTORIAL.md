@@ -5,7 +5,7 @@ This tutorial walks a new user through the Agentic Reliability Framework
 and paste into a Python REPL or notebook after installing the package.
 
 A live, web‑based demo of the engine is available at
-https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-v4.
+https://huggingface.co/spaces/A-R-F/Agentic-Reliability-Framework-v4
 
 ---
 
@@ -13,7 +13,7 @@ https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-v4.
 
 ```bash
 # clone the repo and create a virtual environment (see CONTRIBUTING.md for details)
-git clone git@github.com:petter2025us/agentic-reliability-framework.git
+git clone https://github.com/arf-foundation/agentic-reliability-framework.git
 cd agentic-reliability-framework
 conda env create -f environment.yml        # or python -m venv .venv
 conda activate arf
@@ -45,6 +45,20 @@ etc.) that ARF analyzes.
 Responsible for computing a risk score using hybrid Bayesian models: fast
 conjugate priors online and heavier HMC predictors offline. See
 `core/governance/risk_engine.py` for details. Note: the OSS engine uses per‑category default Beta priors (see the code) rather than a single uniform prior.
+
+### **Decision Logic (DPT)**
+
+ARF uses Deterministic Probability Thresholding (DPT) to convert risk
+scores into actionable governance decisions.
+
+```test
+Approve if P(failure) < 0.2  
+Escalate if 0.2 ≤ P(failure) ≤ 0.8  
+Deny if P(failure) > 0.8
+```
+
+This rule ensures that decision outcomes are transparent,
+reproducible, and easily auditable.
 
 ### **Policy Algebra**
 
