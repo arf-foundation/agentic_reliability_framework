@@ -79,9 +79,12 @@ class SimplePredictiveEngine:
             x = np.arange(len(latencies))
             slope, intercept = np.polyfit(x, latencies, 1)
             next_x = len(latencies)
-            predicted = slope * next_x + intercept
+            predicted = float(slope * next_x + intercept)  # ensure float
             residuals = latencies - (slope * x + intercept)
-            confidence = max(0, 1 - (np.std(residuals) / max(1, np.mean(latencies))))
+            # compute confidence safely
+            mean_lat = np.mean(latencies) or 1.0
+            conf = 1.0 - (np.std(residuals) / mean_lat)
+            confidence = max(0.0, min(1.0, float(conf)))
             if slope > SLOPE_THRESHOLD_INCREASING:
                 trend = "increasing"
                 risk = "critical" if predicted > LATENCY_EXTREME else "high"
@@ -97,7 +100,7 @@ class SimplePredictiveEngine:
                 if abs(denominator) > 0.1:
                     minutes_to = lookahead_minutes * (LATENCY_EXTREME - predicted) / denominator
                     if minutes_to > 0:
-                        time_to_threshold = minutes_to
+                        time_to_threshold = float(minutes_to)
             return ForecastResult(
                 metric="latency",
                 predicted_value=predicted,
@@ -119,7 +122,7 @@ class SimplePredictiveEngine:
             forecast = error_rates[0]
             for rate in error_rates[1:]:
                 forecast = alpha * rate + (1 - alpha) * forecast
-            predicted = forecast
+            predicted = float(forecast)
             recent_trend = np.mean(error_rates[-3:]) - np.mean(error_rates[-6:-3])
             if recent_trend > 0.02:
                 trend = "increasing"
@@ -130,7 +133,11 @@ class SimplePredictiveEngine:
             else:
                 trend = "stable"
                 risk = "low" if predicted < ERROR_RATE_WARNING else "medium"
-            confidence = max(0, 1 - (np.std(error_rates) / max(0.01, np.mean(error_rates))))
+            # confidence based on variance
+            std_err = np.std(error_rates) if len(error_rates) > 1 else 0.0
+            mean_err = np.mean(error_rates) or 0.01
+            conf = 1.0 - (std_err / mean_err)
+            confidence = max(0.0, min(1.0, float(conf)))
             return ForecastResult(
                 metric="error_rate",
                 predicted_value=predicted,
@@ -147,8 +154,10 @@ class SimplePredictiveEngine:
         cpu_vals = [p['cpu_util'] for p in history if p.get('cpu_util') is not None]
         if len(cpu_vals) >= FORECAST_MIN_DATA_POINTS:
             try:
-                predicted = np.mean(cpu_vals[-5:])
-                trend = "increasing" if cpu_vals[-1] > np.mean(cpu_vals[-10:-5]) else "stable"
+                predicted = float(np.mean(cpu_vals[-5:]))
+                recent = cpu_vals[-1] if cpu_vals else 0
+                older = np.mean(cpu_vals[-10:-5]) if len(cpu_vals) >= 10 else predicted
+                trend = "increasing" if recent > older else "stable"
                 risk = "low"
                 if predicted > CPU_CRITICAL:
                     risk = "critical"
@@ -168,8 +177,10 @@ class SimplePredictiveEngine:
         mem_vals = [p['memory_util'] for p in history if p.get('memory_util') is not None]
         if len(mem_vals) >= FORECAST_MIN_DATA_POINTS:
             try:
-                predicted = np.mean(mem_vals[-5:])
-                trend = "increasing" if mem_vals[-1] > np.mean(mem_vals[-10:-5]) else "stable"
+                predicted = float(np.mean(mem_vals[-5:]))
+                recent = mem_vals[-1] if mem_vals else 0
+                older = np.mean(mem_vals[-10:-5]) if len(mem_vals) >= 10 else predicted
+                trend = "increasing" if recent > older else "stable"
                 risk = "low"
                 if predicted > MEMORY_CRITICAL:
                     risk = "critical"
@@ -228,14 +239,14 @@ class BusinessImpactCalculator:
             BASE_REVENUE_PER_MINUTE, BASE_USERS, LATENCY_CRITICAL, CPU_CRITICAL
         )
         impact_multiplier = 1.0
-        if event.latency_p99 > LATENCY_CRITICAL:
+        if event.latency_p99 and event.latency_p99 > LATENCY_CRITICAL:
             impact_multiplier += 0.5
-        if event.error_rate > 0.1:
+        if event.error_rate and event.error_rate > 0.1:
             impact_multiplier += 0.8
         if event.cpu_util and event.cpu_util > CPU_CRITICAL:
             impact_multiplier += 0.3
         revenue_loss = BASE_REVENUE_PER_MINUTE * impact_multiplier * (duration_minutes / 60)
-        user_impact_multiplier = (event.error_rate * 10) + (max(0, event.latency_p99 - 100) / 500)
+        user_impact_multiplier = (event.error_rate * 10) + (max(0, (event.latency_p99 or 0) - 100) / 500)
         affected_users = int(BASE_USERS * user_impact_multiplier)
         if revenue_loss > 500 or affected_users > 5000:
             severity = "CRITICAL"
