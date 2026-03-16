@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-reliability-framework"
-version = "4.0.1+oss"
+version = "4.2.0+oss"
 description = "Agentic Reliability Framework - OSS Edition"
 readme = "README.md"
 authors = [
