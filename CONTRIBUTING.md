@@ -111,7 +111,7 @@ patterns used in this repository.
 
 ## 📚 Additional Resources
 
-* Issue tracker: https://github.com/petter2025us/agentic-reliability-framework/issues
+* Issue tracker: (https://github.com/arf-foundation/agentic-reliability-framework/issues)
 * Discussions/roadmap: see the GitHub Discussions tab
 * Architecture overview: refer to `agentic_reliability_framework/.github/copilot-instructions.md`
 
