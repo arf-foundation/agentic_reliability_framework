@@ -104,7 +104,6 @@ class TestSimplePredictiveEngine:
         result = engine.forecast_service_health("svc1")
         assert result == []
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_forecast_service_health_success(self, populated_engine):
         """Test forecast returns list of ForecastResult."""
         forecasts = populated_engine.forecast_service_health("test-service")
@@ -119,7 +118,6 @@ class TestSimplePredictiveEngine:
         """Test forecast for non-existent service returns empty."""
         assert engine.forecast_service_health("unknown") == []
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_forecast_latency_basic(self, populated_engine):
         """Test _forecast_latency returns a ForecastResult."""
         history = list(populated_engine.service_history["test-service"])
@@ -145,7 +143,6 @@ class TestSimplePredictiveEngine:
         result = populated_engine._forecast_latency(history, 10)
         assert result is None
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_forecast_error_rate_basic(self, populated_engine):
         """Test _forecast_error_rate returns a ForecastResult."""
         history = list(populated_engine.service_history["test-service"])
@@ -162,7 +159,6 @@ class TestSimplePredictiveEngine:
         result = engine._forecast_error_rate(history, 10)
         assert result is None
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_forecast_resources(self, populated_engine):
         """Test _forecast_resources returns list of forecasts for cpu and memory."""
         history = list(populated_engine.service_history["test-service"])
@@ -181,7 +177,6 @@ class TestSimplePredictiveEngine:
         results = engine._forecast_resources(history, 10)
         assert results == []
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_cache_after_forecast(self, populated_engine):
         """Test that forecasts are cached after a successful forecast."""
         forecasts = populated_engine.forecast_service_health("test-service")
@@ -190,7 +185,6 @@ class TestSimplePredictiveEngine:
             key = f"test-service_{f.metric}"
             assert key in populated_engine.prediction_cache
 
-    @pytest.mark.xfail(reason="Forecast methods return None due to Pydantic validation errors; engine needs fix")
     def test_get_predictive_insights(self, populated_engine):
         """Test get_predictive_insights returns expected structure."""
         insights = populated_engine.get_predictive_insights("test-service")
@@ -227,10 +221,8 @@ class TestSimplePredictiveEngine:
         for i in range(5):
             history[-i-1]['latency'] = LATENCY_EXTREME + 50
         result = engine._forecast_latency(history, 10)
-        # Currently returns None, so we can't test risk levels
-        # This is an xfail situation
-        if result is None:
-            pytest.skip("Engine returns None, risk level test skipped")
+        assert result is not None
+        assert result.risk_level in ["high", "critical"]
 
 
 class TestBusinessImpactCalculator:
@@ -241,7 +233,7 @@ class TestBusinessImpactCalculator:
         calc = BusinessImpactCalculator(revenue_per_request=0.02)
         assert calc.revenue_per_request == 0.02
 
-    @pytest.mark.parametrize("latency,error_rate,cpu,expected_severity", [
+    @pytest.mark.parametrize("latency,error_rate,cpu,expected_min_severity", [
         (LATENCY_CRITICAL + 10, 0.02, 0.5, "CRITICAL"),
         (150, 0.15, 0.5, "CRITICAL"),
         (150, 0.02, CPU_CRITICAL + 0.1, "CRITICAL"),
@@ -249,9 +241,8 @@ class TestBusinessImpactCalculator:
         (120, 0.03, 0.6, "MEDIUM"),
         (80, 0.005, 0.4, "LOW"),
     ])
-    @pytest.mark.xfail(reason="Severity thresholds may differ; test needs alignment with actual constants")
-    def test_calculate_impact_severity(self, latency, error_rate, cpu, expected_severity):
-        """Test severity classification."""
+    def test_calculate_impact_severity(self, latency, error_rate, cpu, expected_min_severity):
+        """Test severity classification (actual may be higher, but not lower)."""
         event = ReliabilityEvent(
             component="test",
             latency_p99=latency,
@@ -260,14 +251,10 @@ class TestBusinessImpactCalculator:
         )
         calc = BusinessImpactCalculator()
         result = calc.calculate_impact(event, duration_minutes=10)
-        # The actual severity might be higher due to thresholds, so we'll check if it's at least expected
-        # For now, we'll adjust expectations based on actual output
-        actual = result['severity_level']
-        # This is a bit hacky, but we'll accept if actual is >= expected in order
         severity_order = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-        expected_index = severity_order.index(expected_severity)
-        actual_index = severity_order.index(actual)
-        assert actual_index >= expected_index
+        actual_index = severity_order.index(result['severity_level'])
+        expected_min_index = severity_order.index(expected_min_severity)
+        assert actual_index >= expected_min_index
 
     def test_calculate_impact_returns_correct_keys(self):
         """Test result dictionary has expected keys."""
@@ -302,3 +289,12 @@ class TestBusinessImpactCalculator:
         res_long = calc.calculate_impact(event, duration_minutes=60)
         assert res_long['revenue_loss_estimate'] > res_short['revenue_loss_estimate']
         assert res_long['affected_users_estimate'] == res_short['affected_users_estimate']
+
+    def test_calculate_impact_with_none_values(self):
+        """Test handling of None metrics (should not crash)."""
+        event = ReliabilityEvent(component="test", latency_p99=None, error_rate=None, cpu_util=None)
+        calc = BusinessImpactCalculator()
+        result = calc.calculate_impact(event)
+        assert result['revenue_loss_estimate'] == BASE_REVENUE_PER_MINUTE * (5/60)  # base only
+        assert result['affected_users_estimate'] == 0
+        assert result['severity_level'] == "LOW"
