@@ -185,7 +185,7 @@ If you use ARF in research, please cite:
 @misc{arf2025,
   title={Agentic Reliability Framework (ARF)},
   author={Juan, Petter and contributors},
-  year={2025},
+  year={2026},
   howpublished={\url{https://github.com/petter2025us/agentic-reliability-framework}}
 }
 ```
