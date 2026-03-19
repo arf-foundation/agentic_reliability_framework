@@ -71,6 +71,7 @@ def validate_infrastructure_config(config: dict) -> dict:
         "warnings": warnings,
     }
 
+from .governance_loop import GovernanceLoop
 
 __all__ = [
     # Intents
@@ -108,4 +109,7 @@ __all__ = [
 
     # Validation
     "validate_infrastructure_config",
+
+    # Governance Loop
+    "GovernanceLoop",
 ]
