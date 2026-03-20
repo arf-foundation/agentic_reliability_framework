@@ -1,6 +1,7 @@
 """Tests for the canonical governance loop."""
 import pytest
 from unittest.mock import Mock, patch
+import numpy as np
 
 from agentic_reliability_framework.core.governance.governance_loop import GovernanceLoop
 from agentic_reliability_framework.core.governance.intents import (
@@ -39,7 +40,14 @@ def mock_risk_engine():
     engine.calculate_risk.return_value = (
         0.15,
         "Explanation",
-        {"conjugate_alpha": 1.5, "conjugate_beta": 8.0, "weights": {"conjugate": 1.0}}
+        {
+            "conjugate_alpha": 1.5,
+            "conjugate_beta": 8.0,
+            "weights": {"conjugate": 0.8, "hyper": 0.0, "hmc": 0.2},
+            "conjugate_mean": 0.12,
+            "hyper_mean": 0.0,
+            "hmc_prediction": 0.27,
+        }
     )
     return engine
 
@@ -74,7 +82,14 @@ def test_governance_loop_basic_run(
     assert intent.policy_violations == ()
     assert "predictive_risk" in intent.metadata
     assert "epistemic_breakdown" in intent.metadata
-    assert "decision_trace" in intent.metadata  # NEW
+    assert "decision_trace" in intent.metadata
+
+    # Check risk_factors
+    assert intent.risk_factors is not None
+    assert "conjugate" in intent.risk_factors
+    # Verify contributions sum to risk_score (within tolerance)
+    total = sum(intent.risk_factors.values())
+    assert abs(total - intent.risk_score) < 1e-6
 
 
 def test_governance_loop_policy_violation(
@@ -157,7 +172,7 @@ def test_governance_loop_bayesian_decision(
     # Set risk low, epistemic low, business impact high
     mock_risk_engine.calculate_risk.return_value = (
         0.1, "Low risk",
-        {"conjugate_alpha": 1.5, "conjugate_beta": 12.0}
+        {"conjugate_alpha": 1.5, "conjugate_beta": 12.0, "weights": {"conjugate": 1.0}}
     )
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
@@ -183,7 +198,7 @@ def test_governance_loop_variance_escalation(
     # Set risk moderate but variance high (Beta(1,1) has variance 1/12 ≈ 0.0833)
     mock_risk_engine.calculate_risk.return_value = (
         0.5, "High uncertainty risk",
-        {"conjugate_alpha": 1.0, "conjugate_beta": 1.0}
+        {"conjugate_alpha": 1.0, "conjugate_beta": 1.0, "weights": {"conjugate": 1.0}}
     )
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
