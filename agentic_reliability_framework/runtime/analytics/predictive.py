@@ -214,7 +214,11 @@ class BusinessImpactCalculator:
         latency = event.latency_p99 if event.latency_p99 is not None else 0.0
         error_rate = event.error_rate  # keep None for fallback
         cpu = event.cpu_util if event.cpu_util is not None else 0.5
-        throughput = event.throughput if event.throughput is not None else BASE_USERS  # fallback
+
+        # Handle throughput: use BASE_USERS if missing or zero
+        throughput = event.throughput
+        if throughput is None or throughput == 0:
+            throughput = BASE_USERS
 
         # NEW: Fallback for missing error_rate
         if error_rate is None:
