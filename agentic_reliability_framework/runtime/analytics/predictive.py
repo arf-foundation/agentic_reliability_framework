@@ -1,6 +1,6 @@
 # runtime/analytics/predictive.py
 """
-Predictive analytics engine using simple linear regression with risk classification.
+Predictive analytics engine using timestamp‑based linear regression with risk classification.
 """
 import numpy as np
 from datetime import datetime, timedelta, timezone
@@ -18,7 +18,7 @@ from agentic_reliability_framework.core.config.constants import (
 
 
 class SimplePredictiveEngine:
-    """Simple linear‑regression based predictive engine with caching."""
+    """Simple timestamp‑based linear regression predictive engine with caching."""
 
     def __init__(self, history_window: int = 100):
         self.history_window = history_window
@@ -38,6 +38,10 @@ class SimplePredictiveEngine:
         if 'latency_p99' in point:
             point['latency'] = point.pop('latency_p99')
         self.service_history[service].append(point)
+        # Invalidate cache for this service
+        keys_to_remove = [k for k in self.prediction_cache if k.startswith(f"{service}_")]
+        for key in keys_to_remove:
+            del self.prediction_cache[key]
 
     def _clean_cache(self):
         """Remove stale cached forecasts."""
@@ -47,28 +51,35 @@ class SimplePredictiveEngine:
         for k in expired:
             del self.prediction_cache[k]
 
-    def _forecast_metric(self, history: List[Dict], metric: str, lookahead: int,
+    def _forecast_metric(self, history: List[Dict], metric: str, lookahead_minutes: int,
                          lower_bound: float = 0, upper_bound: Optional[float] = None,
                          thresholds: Optional[Dict[str, float]] = None) -> Optional[ForecastResult]:
-        """Generic forecasting for a single metric."""
+        """Generic forecasting for a single metric using timestamp regression."""
         if len(history) < FORECAST_MIN_DATA_POINTS:
             return None
-        values = [p.get(metric) for p in history if metric in p]
+        # Extract timestamps and values
+        timestamps = [p['timestamp'] for p in history if metric in p]
+        values = [p[metric] for p in history if metric in p]
         if len(values) < FORECAST_MIN_DATA_POINTS:
             return None
-        x = np.arange(len(values))
+        # Convert to seconds since first point
+        t0 = timestamps[0]
+        t_sec = [(ts - t0).total_seconds() for ts in timestamps]
+        x = np.array(t_sec)
         y = np.array(values)
         try:
             slope, intercept = np.polyfit(x, y, 1)
-            predicted = intercept + slope * (len(values) + lookahead)
+            # Forecast at current time + lookahead minutes
+            future_seconds = lookahead_minutes * 60
+            predicted = intercept + slope * (x[-1] + future_seconds)
             if upper_bound is not None:
                 predicted = min(predicted, upper_bound)
             predicted = max(predicted, lower_bound)
 
             # Trend
-            if slope > 0.01:
+            if slope > 0.01 / 60:  # per minute slope > 0.01
                 trend = "increasing"
-            elif slope < -0.01:
+            elif slope < -0.01 / 60:
                 trend = "decreasing"
             else:
                 trend = "stable"
@@ -103,15 +114,15 @@ class SimplePredictiveEngine:
             r2 = 1 - (np.var(residuals) / np.var(y)) if len(y) > 1 else 0.5
             confidence = max(0.0, min(1.0, r2))
 
-            # Estimate time to threshold (if threshold defined)
+            # Estimate time to threshold (in minutes)
             time_to_threshold = None
             if thresholds and "threshold" in thresholds:
                 threshold_val = thresholds["threshold"]
                 if slope > 0:
                     last_val = y[-1]
                     if last_val < threshold_val:
-                        steps_needed = (threshold_val - last_val) / max(slope, 1e-6)
-                        time_to_threshold = steps_needed * lookahead  # minutes approx
+                        seconds_needed = (threshold_val - last_val) / max(slope, 1e-6)
+                        time_to_threshold = seconds_needed / 60.0
 
             return ForecastResult(
                 metric=metric,
@@ -177,9 +188,7 @@ class SimplePredictiveEngine:
             "forecast_timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-    # -------------------------------------------------------------------
     # Backward‑compatible methods (wrappers around _forecast_metric)
-    # -------------------------------------------------------------------
     def _forecast_latency(self, history: List[Dict], lookahead: int) -> Optional[ForecastResult]:
         return self._forecast_metric(history, "latency", lookahead, lower_bound=0)
 
@@ -205,10 +214,15 @@ class BusinessImpactCalculator:
         latency = event.latency_p99 if event.latency_p99 is not None else 0.0
         error_rate = event.error_rate if event.error_rate is not None else 0.0
         cpu = event.cpu_util if event.cpu_util is not None else 0.5
+        throughput = event.throughput if event.throughput is not None else BASE_USERS  # fallback
 
-        # Impact estimation (simplified)
-        revenue_loss = BASE_REVENUE_PER_MINUTE * (duration_minutes / 60) * (1 + error_rate * 5 + latency / 1000)
-        affected_users = BASE_USERS * error_rate
+        # Impact estimation: revenue loss = throughput * revenue_per_request * error_rate * duration
+        revenue_loss = throughput * self.revenue_per_request * error_rate * duration_minutes
+        # Also include latency impact: higher latency reduces effective throughput
+        latency_factor = 1 + (latency / 1000)  # normalized
+        revenue_loss *= latency_factor
+
+        affected_users = throughput * error_rate
 
         # Severity classification
         if latency >= LATENCY_CRITICAL or error_rate >= ERROR_RATE_CRITICAL or cpu >= CPU_CRITICAL:
