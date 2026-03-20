@@ -5,6 +5,7 @@
 [![Tests](https://github.com/petter2025us/agentic-reliability-framework/actions/workflows/python-package-conda.yml/badge.svg)](https://github.com/petter2025us/agentic-reliability-framework/actions/workflows/python-package-conda.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Hugging Face Space](https://img.shields.io/badge/demo%20space-v4-orange?logo=huggingface)](https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-v4)
+[![Reliable AI Systems Stack](https://img.shields.io/badge/🤗-Reliable%20AI%20Stack-blue)](https://huggingface.co/collections/petter2025/reliable-ai-systems-stack)
 
 ## 🎯 Overview
 
@@ -173,6 +174,7 @@ via the **Contact** section below.
 
 - **Live demo:** https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-v4
 - **Legacy API demo:** https://huggingface.co/spaces/petter2025/Agentic-Reliability-Framework-API
+- **Reliable AI Systems Stack (curated collection):** https://huggingface.co/collections/petter2025/reliable-ai-systems-stack
 - **Full documentation:** docs/ (online version coming soon at
   https://docs.agentic-reliability-framework.io)
 
