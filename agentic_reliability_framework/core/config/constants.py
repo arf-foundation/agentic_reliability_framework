@@ -102,7 +102,7 @@ BASE_REVENUE_PER_MINUTE: Final[float] = 100.0  # Base revenue per minute (for SL
 BASE_USERS: Final[int] = 10000  # Base number of users for impact calculations
 
 # ==================== BAYESIAN DECISION COEFFICIENTS ====================
-# These coefficients are used in the Bayesian expected loss minimization.
+# These coefficients are used in the expected loss minimization.
 # They should be calibrated based on business priorities (cost of incident, review cost, etc.)
 COST_FP: Final[float] = 10.0          # Cost of approving a bad intent (incident cost)
 COST_IMPACT: Final[float] = 5.0       # Weight on business impact in approve loss
@@ -113,6 +113,12 @@ COST_UNCERTAINTY: Final[float] = 4.0  # Penalty per unit epistemic uncertainty
 
 # Epistemic escalation threshold (used in the gate)
 EPISTEMIC_ESCALATION_THRESHOLD: Final[float] = 0.5
+
+# NEW: Additional coefficients for upgraded decision policy
+COST_PREDICTIVE: Final[float] = 2.0   # Weight for predictive risk in approve loss
+COST_VARIANCE: Final[float] = 5.0     # Weight for variance penalty in approve loss
+# NEW: Flag to enable/disable the old epistemic gate (default True for safety)
+USE_EPISTEMIC_GATE: Final[bool] = True
 
 # === SECURITY BOUNDARIES ===
 MAX_API_KEYS: Final[int] = 1  # Only HuggingFace API key
@@ -629,6 +635,9 @@ __all__ = [
     "COST_REVIEW",
     "COST_UNCERTAINTY",
     "EPISTEMIC_ESCALATION_THRESHOLD",
+    "COST_PREDICTIVE",
+    "COST_VARIANCE",
+    "USE_EPISTEMIC_GATE",
     
     # === SECURITY BOUNDARIES ===
     "MAX_API_KEYS",
