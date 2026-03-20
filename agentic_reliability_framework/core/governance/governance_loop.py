@@ -2,6 +2,11 @@
 Canonical Governance Loop – orchestrates policy, cost, risk, epistemic, and memory analysis.
 Integrates the ECLIPSE hallucination probe for epistemic uncertainty quantification.
 Uses Bayesian expected loss minimization for final action.
+
+The resulting HealingIntent includes full traceability:
+- `infrastructure_intent_id` and `infrastructure_intent` link back to the original InfrastructureIntent.
+- `source` is set to `IntentSource.INFRASTRUCTURE_ANALYSIS`.
+- All decision factors, epistemic breakdown, and forecasts are stored in `metadata`.
 """
 
 import logging
@@ -30,11 +35,19 @@ from agentic_reliability_framework.core.config.constants import (
 
 logger = logging.getLogger(__name__)
 
+
 class GovernanceLoop:
     """
     Orchestrates the full governance evaluation, integrating policy, cost, risk,
     epistemic uncertainty (including hallucination detection), predictive foresight,
     and semantic memory.
+
+    The output HealingIntent is constructed via `HealingIntent.from_infrastructure_intent()`,
+    ensuring that:
+    - `infrastructure_intent_id` and `infrastructure_intent` capture the original infrastructure analysis.
+    - `source` is set to `IntentSource.INFRASTRUCTURE_ANALYSIS`.
+    - All decision metadata (expected losses, epistemic breakdown, forecasts, etc.) are stored in
+      the `metadata` field, making the intent fully auditable.
     """
 
     def __init__(
@@ -66,6 +79,26 @@ class GovernanceLoop:
         intent: InfrastructureIntent,
         context: Optional[Dict[str, Any]] = None,
     ) -> HealingIntent:
+        """
+        Execute the governance loop for a single InfrastructureIntent.
+
+        Returns a HealingIntent with full traceability:
+        - The original InfrastructureIntent is embedded via `infrastructure_intent` and `infrastructure_intent_id`.
+        - Decision‑critical fields (risk, cost, epistemic uncertainty, business impact) are stored in `metadata`.
+        - The intent is automatically marked as OSS advisory (`mark_as_oss_advisory()`).
+
+        Parameters
+        ----------
+        intent : InfrastructureIntent
+            The infrastructure request to evaluate.
+        context : dict, optional
+            Additional runtime context (incident ID, service name, telemetry values, etc.).
+
+        Returns
+        -------
+        HealingIntent
+            An immutable healing recommendation with full provenance.
+        """
         context = context or {}
         logger.debug(f"Running governance loop for intent {intent.intent_id if hasattr(intent, 'intent_id') else 'unknown'}")
 
