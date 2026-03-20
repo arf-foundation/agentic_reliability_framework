@@ -1,265 +1,228 @@
+# runtime/analytics/predictive.py
 """
-Predictive analytics engine for forecasting service health.
+Predictive analytics engine using simple linear regression with risk classification.
 """
-
-import threading
-import logging
-import datetime
 import numpy as np
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Any, Deque
 from collections import deque
-from typing import Dict, List, Optional, Tuple, Any
 
 from agentic_reliability_framework.core.models.event import ForecastResult, ReliabilityEvent
 from agentic_reliability_framework.core.config.constants import (
-    HISTORY_WINDOW, CACHE_EXPIRY_MINUTES, FORECAST_MIN_DATA_POINTS,
-    FORECAST_LOOKAHEAD_MINUTES, SLOPE_THRESHOLD_INCREASING,
-    SLOPE_THRESHOLD_DECREASING, LATENCY_WARNING, LATENCY_EXTREME,
-    ERROR_RATE_WARNING, ERROR_RATE_CRITICAL, CPU_WARNING, CPU_CRITICAL,
-    MEMORY_WARNING, MEMORY_CRITICAL
+    FORECAST_MIN_DATA_POINTS,
+    LATENCY_WARNING, LATENCY_EXTREME, LATENCY_CRITICAL,
+    ERROR_RATE_WARNING, ERROR_RATE_CRITICAL,
+    CPU_WARNING, CPU_CRITICAL, MEMORY_WARNING, MEMORY_CRITICAL,
+    CACHE_EXPIRY_MINUTES, BASE_REVENUE_PER_MINUTE, BASE_USERS
 )
-
-logger = logging.getLogger(__name__)
 
 
 class SimplePredictiveEngine:
-    def __init__(self, history_window: int = HISTORY_WINDOW):
-        self.history_window = history_window
-        self.service_history: Dict[str, deque] = {}
-        self.prediction_cache: Dict[str, Tuple[ForecastResult, datetime.datetime]] = {}
-        self.max_cache_age = datetime.timedelta(minutes=CACHE_EXPIRY_MINUTES)
-        self._lock = threading.RLock()
-        logger.info(f"Initialized SimplePredictiveEngine with history_window={history_window}")
+    """Simple linear‑regression based predictive engine with caching."""
 
-    def add_telemetry(self, service: str, event_data: Dict):
-        with self._lock:
-            if service not in self.service_history:
-                self.service_history[service] = deque(maxlen=self.history_window)
-            telemetry_point = {
-                'timestamp': datetime.datetime.now(datetime.timezone.utc),
-                'latency': event_data.get('latency_p99', 0),
-                'error_rate': event_data.get('error_rate', 0),
-                'throughput': event_data.get('throughput', 0),
-                'cpu_util': event_data.get('cpu_util'),
-                'memory_util': event_data.get('memory_util')
-            }
-            self.service_history[service].append(telemetry_point)
-            self._clean_cache()
+    def __init__(self, history_window: int = 100):
+        self.history_window = history_window
+        self.service_history: Dict[str, Deque] = {}
+        self.prediction_cache: Dict[str, tuple] = {}  # key -> (ForecastResult, timestamp)
+        self.max_cache_age = timedelta(minutes=CACHE_EXPIRY_MINUTES)
+
+    def add_telemetry(self, service: str, metrics: Dict[str, float]):
+        """Store a new telemetry point for a service."""
+        if service not in self.service_history:
+            self.service_history[service] = deque(maxlen=self.history_window)
+        point = {
+            'timestamp': datetime.now(timezone.utc),
+            **metrics
+        }
+        # Normalise key names
+        if 'latency_p99' in point:
+            point['latency'] = point.pop('latency_p99')
+        self.service_history[service].append(point)
 
     def _clean_cache(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        expired = [k for k, (_, ts) in self.prediction_cache.items() if now - ts > self.max_cache_age]
+        """Remove stale cached forecasts."""
+        now = datetime.now(timezone.utc)
+        expired = [k for k, (_, ts) in self.prediction_cache.items()
+                   if now - ts > self.max_cache_age]
         for k in expired:
             del self.prediction_cache[k]
 
-    def forecast_service_health(self, service: str, lookahead_minutes: int = FORECAST_LOOKAHEAD_MINUTES) -> List[ForecastResult]:
-        with self._lock:
-            if service not in self.service_history or len(self.service_history[service]) < FORECAST_MIN_DATA_POINTS:
-                return []
-            history = list(self.service_history[service])
-        forecasts = []
-        latency_forecast = self._forecast_latency(history, lookahead_minutes)
-        if latency_forecast:
-            forecasts.append(latency_forecast)
-        error_forecast = self._forecast_error_rate(history, lookahead_minutes)
-        if error_forecast:
-            forecasts.append(error_forecast)
-        resource_forecasts = self._forecast_resources(history, lookahead_minutes)
-        forecasts.extend(resource_forecasts)
-        with self._lock:
-            for forecast in forecasts:
-                cache_key = f"{service}_{forecast.metric}"
-                self.prediction_cache[cache_key] = (forecast, datetime.datetime.now(datetime.timezone.utc))
-        return forecasts
-
-    def _forecast_latency(self, history: List, lookahead_minutes: int) -> Optional[ForecastResult]:
+    def _forecast_metric(self, history: List[Dict], metric: str, lookahead: int,
+                         lower_bound: float = 0, upper_bound: Optional[float] = None,
+                         thresholds: Optional[Dict[str, float]] = None) -> Optional[ForecastResult]:
+        """Generic forecasting for a single metric."""
+        if len(history) < FORECAST_MIN_DATA_POINTS:
+            return None
+        values = [p.get(metric) for p in history if metric in p]
+        if len(values) < FORECAST_MIN_DATA_POINTS:
+            return None
+        x = np.arange(len(values))
+        y = np.array(values)
         try:
-            latencies = [point['latency'] for point in history[-20:]]
-            if len(latencies) < FORECAST_MIN_DATA_POINTS:
-                return None
-            x = np.arange(len(latencies))
-            slope, intercept = np.polyfit(x, latencies, 1)
-            next_x = len(latencies)
-            predicted = float(slope * next_x + intercept)  # ensure float
-            residuals = latencies - (slope * x + intercept)
-            # compute confidence safely
-            mean_lat = np.mean(latencies) or 1.0
-            conf = 1.0 - (np.std(residuals) / mean_lat)
-            confidence = max(0.0, min(1.0, float(conf)))
-            if slope > SLOPE_THRESHOLD_INCREASING:
+            slope, intercept = np.polyfit(x, y, 1)
+            predicted = intercept + slope * (len(values) + lookahead)
+            if upper_bound is not None:
+                predicted = min(predicted, upper_bound)
+            predicted = max(predicted, lower_bound)
+
+            # Trend
+            if slope > 0.01:
                 trend = "increasing"
-                risk = "critical" if predicted > LATENCY_EXTREME else "high"
-            elif slope < SLOPE_THRESHOLD_DECREASING:
+            elif slope < -0.01:
                 trend = "decreasing"
-                risk = "low"
             else:
                 trend = "stable"
-                risk = "low" if predicted < LATENCY_WARNING else "medium"
+
+            # Risk level based on thresholds
+            if metric == "latency":
+                if predicted >= LATENCY_CRITICAL:
+                    risk = "critical"
+                elif predicted >= LATENCY_EXTREME:
+                    risk = "high"
+                elif predicted >= LATENCY_WARNING:
+                    risk = "medium"
+                else:
+                    risk = "low"
+            elif metric == "error_rate":
+                if predicted >= ERROR_RATE_CRITICAL:
+                    risk = "critical"
+                elif predicted >= ERROR_RATE_WARNING:
+                    risk = "high"
+                else:
+                    risk = "low"
+            else:  # cpu_util, memory_util
+                if predicted >= (CPU_CRITICAL if metric == "cpu_util" else MEMORY_CRITICAL):
+                    risk = "critical"
+                elif predicted >= (CPU_WARNING if metric == "cpu_util" else MEMORY_WARNING):
+                    risk = "high"
+                else:
+                    risk = "low"
+
+            # Confidence based on R²
+            residuals = y - (intercept + slope * x)
+            r2 = 1 - (np.var(residuals) / np.var(y)) if len(y) > 1 else 0.5
+            confidence = max(0.0, min(1.0, r2))
+
+            # Estimate time to threshold (if threshold defined)
             time_to_threshold = None
-            if slope > 0 and predicted < LATENCY_EXTREME:
-                denominator = predicted - latencies[-1]
-                if abs(denominator) > 0.1:
-                    minutes_to = lookahead_minutes * (LATENCY_EXTREME - predicted) / denominator
-                    if minutes_to > 0:
-                        time_to_threshold = float(minutes_to)
+            if thresholds and "threshold" in thresholds:
+                threshold_val = thresholds["threshold"]
+                if slope > 0:
+                    last_val = y[-1]
+                    if last_val < threshold_val:
+                        steps_needed = (threshold_val - last_val) / max(slope, 1e-6)
+                        time_to_threshold = steps_needed * lookahead  # minutes approx
+
             return ForecastResult(
-                metric="latency",
-                predicted_value=predicted,
-                confidence=confidence,
+                metric=metric,
+                predicted_value=float(predicted),
+                confidence=float(confidence),
                 trend=trend,
-                time_to_threshold=time_to_threshold,
-                risk_level=risk
+                risk_level=risk,
+                time_to_threshold=time_to_threshold
             )
-        except Exception as e:
-            logger.error(f"Latency forecast error: {e}")
+        except Exception:
             return None
 
-    def _forecast_error_rate(self, history: List, lookahead_minutes: int) -> Optional[ForecastResult]:
-        try:
-            error_rates = [point['error_rate'] for point in history[-15:]]
-            if len(error_rates) < FORECAST_MIN_DATA_POINTS:
-                return None
-            alpha = 0.3
-            forecast = error_rates[0]
-            for rate in error_rates[1:]:
-                forecast = alpha * rate + (1 - alpha) * forecast
-            predicted = float(forecast)
-            recent_trend = np.mean(error_rates[-3:]) - np.mean(error_rates[-6:-3])
-            if recent_trend > 0.02:
-                trend = "increasing"
-                risk = "critical" if predicted > ERROR_RATE_CRITICAL else "high"
-            elif recent_trend < -0.01:
-                trend = "decreasing"
-                risk = "low"
-            else:
-                trend = "stable"
-                risk = "low" if predicted < ERROR_RATE_WARNING else "medium"
-            # confidence based on variance
-            std_err = np.std(error_rates) if len(error_rates) > 1 else 0.0
-            mean_err = np.mean(error_rates) or 0.01
-            conf = 1.0 - (std_err / mean_err)
-            confidence = max(0.0, min(1.0, float(conf)))
-            return ForecastResult(
-                metric="error_rate",
-                predicted_value=predicted,
-                confidence=confidence,
-                trend=trend,
-                risk_level=risk
-            )
-        except Exception as e:
-            logger.error(f"Error rate forecast error: {e}")
-            return None
-
-    def _forecast_resources(self, history: List, lookahead_minutes: int) -> List[ForecastResult]:
+    def forecast_service_health(self, service: str) -> List[ForecastResult]:
+        """Return forecasts for all available metrics of a service."""
+        self._clean_cache()
+        if service not in self.service_history:
+            return []
+        history = list(self.service_history[service])
         forecasts = []
-        cpu_vals = [p['cpu_util'] for p in history if p.get('cpu_util') is not None]
-        if len(cpu_vals) >= FORECAST_MIN_DATA_POINTS:
-            try:
-                predicted = float(np.mean(cpu_vals[-5:]))
-                recent = cpu_vals[-1] if cpu_vals else 0
-                older = np.mean(cpu_vals[-10:-5]) if len(cpu_vals) >= 10 else predicted
-                trend = "increasing" if recent > older else "stable"
-                risk = "low"
-                if predicted > CPU_CRITICAL:
-                    risk = "critical"
-                elif predicted > CPU_WARNING:
-                    risk = "high"
-                elif predicted > 0.7:
-                    risk = "medium"
-                forecasts.append(ForecastResult(
-                    metric="cpu_util",
-                    predicted_value=predicted,
-                    confidence=0.7,
-                    trend=trend,
-                    risk_level=risk
-                ))
-            except Exception as e:
-                logger.error(f"CPU forecast error: {e}")
-        mem_vals = [p['memory_util'] for p in history if p.get('memory_util') is not None]
-        if len(mem_vals) >= FORECAST_MIN_DATA_POINTS:
-            try:
-                predicted = float(np.mean(mem_vals[-5:]))
-                recent = mem_vals[-1] if mem_vals else 0
-                older = np.mean(mem_vals[-10:-5]) if len(mem_vals) >= 10 else predicted
-                trend = "increasing" if recent > older else "stable"
-                risk = "low"
-                if predicted > MEMORY_CRITICAL:
-                    risk = "critical"
-                elif predicted > MEMORY_WARNING:
-                    risk = "high"
-                elif predicted > 0.7:
-                    risk = "medium"
-                forecasts.append(ForecastResult(
-                    metric="memory_util",
-                    predicted_value=predicted,
-                    confidence=0.7,
-                    trend=trend,
-                    risk_level=risk
-                ))
-            except Exception as e:
-                logger.error(f"Memory forecast error: {e}")
+        for metric in ["latency", "error_rate", "cpu_util", "memory_util"]:
+            key = f"{service}_{metric}"
+            if key in self.prediction_cache:
+                f, _ = self.prediction_cache[key]
+                forecasts.append(f)
+            else:
+                if metric == "latency":
+                    f = self._forecast_metric(history, "latency", 10, lower_bound=0,
+                                               thresholds={"threshold": LATENCY_CRITICAL})
+                elif metric == "error_rate":
+                    f = self._forecast_metric(history, "error_rate", 10, lower_bound=0, upper_bound=1,
+                                               thresholds={"threshold": ERROR_RATE_CRITICAL})
+                elif metric == "cpu_util":
+                    f = self._forecast_metric(history, "cpu_util", 10, lower_bound=0, upper_bound=1,
+                                               thresholds={"threshold": CPU_CRITICAL})
+                elif metric == "memory_util":
+                    f = self._forecast_metric(history, "memory_util", 10, lower_bound=0, upper_bound=1,
+                                               thresholds={"threshold": MEMORY_CRITICAL})
+                if f:
+                    self.prediction_cache[key] = (f, datetime.now(timezone.utc))
+                    forecasts.append(f)
         return forecasts
 
     def get_predictive_insights(self, service: str) -> Dict[str, Any]:
+        """Return structured insights including warnings and recommendations."""
         forecasts = self.forecast_service_health(service)
-        critical_risks = [f for f in forecasts if f.risk_level in ["high", "critical"]]
         warnings = []
         recommendations = []
-        for f in critical_risks:
-            if f.metric == "latency":
-                warnings.append(f"📈 Latency expected to reach {f.predicted_value:.0f}ms")
-                if f.time_to_threshold:
-                    recommendations.append(f"⏰ Critical latency in ~{int(f.time_to_threshold)} minutes")
-                recommendations.append("🔧 Consider scaling or optimizing dependencies")
-            elif f.metric == "error_rate":
-                warnings.append(f"🚨 Errors expected to reach {f.predicted_value*100:.1f}%")
-                recommendations.append("🐛 Investigate recent deployments or dependency issues")
-            elif f.metric == "cpu_util":
-                warnings.append(f"🔥 CPU expected at {f.predicted_value*100:.1f}%")
-                recommendations.append("⚡ Consider scaling compute resources")
-            elif f.metric == "memory_util":
-                warnings.append(f"💾 Memory expected at {f.predicted_value*100:.1f}%")
-                recommendations.append("🧹 Check for memory leaks or optimize usage")
+        critical_count = 0
+        for f in forecasts:
+            if f.risk_level == "critical":
+                critical_count += 1
+                warnings.append(f"{f.metric} is forecast to reach critical levels.")
+                recommendations.append(f"Immediate action required on {f.metric}.")
+            elif f.risk_level == "high":
+                warnings.append(f"{f.metric} is forecast to be high.")
+                recommendations.append(f"Consider scaling or reviewing {f.metric}.")
         return {
-            'service': service,
-            'forecasts': [f.model_dump() for f in forecasts],
-            'warnings': warnings[:3],
-            'recommendations': list(dict.fromkeys(recommendations))[:3],
-            'critical_risk_count': len(critical_risks),
-            'forecast_timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+            "service": service,
+            "forecasts": forecasts,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "critical_risk_count": critical_count,
+            "forecast_timestamp": datetime.now(timezone.utc).isoformat()
         }
+
+    # -------------------------------------------------------------------
+    # Backward‑compatible methods (wrappers around _forecast_metric)
+    # -------------------------------------------------------------------
+    def _forecast_latency(self, history: List[Dict], lookahead: int) -> Optional[ForecastResult]:
+        return self._forecast_metric(history, "latency", lookahead, lower_bound=0)
+
+    def _forecast_error_rate(self, history: List[Dict], lookahead: int) -> Optional[ForecastResult]:
+        return self._forecast_metric(history, "error_rate", lookahead, lower_bound=0, upper_bound=1)
+
+    def _forecast_resources(self, history: List[Dict], lookahead: int) -> List[ForecastResult]:
+        forecasts = []
+        for metric in ["cpu_util", "memory_util"]:
+            f = self._forecast_metric(history, metric, lookahead, lower_bound=0, upper_bound=1)
+            if f:
+                forecasts.append(f)
+        return forecasts
 
 
 class BusinessImpactCalculator:
+    """Calculate business impact from a ReliabilityEvent."""
+
     def __init__(self, revenue_per_request: float = 0.01):
         self.revenue_per_request = revenue_per_request
-        logger.info("Initialized BusinessImpactCalculator")
 
-    def calculate_impact(self, event: ReliabilityEvent, duration_minutes: int = 5) -> Dict[str, Any]:
-        from agentic_reliability_framework.core.config.constants import (
-            BASE_REVENUE_PER_MINUTE, BASE_USERS, LATENCY_CRITICAL, CPU_CRITICAL
-        )
-        impact_multiplier = 1.0
-        if event.latency_p99 and event.latency_p99 > LATENCY_CRITICAL:
-            impact_multiplier += 0.5
-        if event.error_rate and event.error_rate > 0.1:
-            impact_multiplier += 0.8
-        if event.cpu_util and event.cpu_util > CPU_CRITICAL:
-            impact_multiplier += 0.3
-        revenue_loss = BASE_REVENUE_PER_MINUTE * impact_multiplier * (duration_minutes / 60)
-        user_impact_multiplier = (event.error_rate * 10) + (max(0, (event.latency_p99 or 0) - 100) / 500)
-        affected_users = int(BASE_USERS * user_impact_multiplier)
-        if revenue_loss > 500 or affected_users > 5000:
+    def calculate_impact(self, event: ReliabilityEvent, duration_minutes: int = 5) -> Dict:
+        latency = event.latency_p99 if event.latency_p99 is not None else 0.0
+        error_rate = event.error_rate if event.error_rate is not None else 0.0
+        cpu = event.cpu_util if event.cpu_util is not None else 0.5
+
+        # Impact estimation (simplified)
+        revenue_loss = BASE_REVENUE_PER_MINUTE * (duration_minutes / 60) * (1 + error_rate * 5 + latency / 1000)
+        affected_users = BASE_USERS * error_rate
+
+        # Severity classification
+        if latency >= LATENCY_CRITICAL or error_rate >= ERROR_RATE_CRITICAL or cpu >= CPU_CRITICAL:
             severity = "CRITICAL"
-        elif revenue_loss > 100 or affected_users > 1000:
+        elif latency >= LATENCY_EXTREME or error_rate >= ERROR_RATE_WARNING or cpu >= CPU_WARNING:
             severity = "HIGH"
-        elif revenue_loss > 50 or affected_users > 500:
+        elif latency >= LATENCY_WARNING or error_rate >= 0.02 or cpu >= 0.7:
             severity = "MEDIUM"
         else:
             severity = "LOW"
-        logger.info(f"Business impact: ${revenue_loss:.2f} revenue loss, {affected_users} users, {severity} severity")
+
         return {
-            'revenue_loss_estimate': round(revenue_loss, 2),
-            'affected_users_estimate': affected_users,
-            'severity_level': severity,
-            'throughput_reduction_pct': round(min(100, user_impact_multiplier * 100), 1)
+            "revenue_loss_estimate": revenue_loss,
+            "affected_users_estimate": affected_users,
+            "severity_level": severity,
+            "throughput_reduction_pct": error_rate * 100
         }
