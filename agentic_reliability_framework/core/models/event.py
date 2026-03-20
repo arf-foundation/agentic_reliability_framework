@@ -1,7 +1,5 @@
 # core/models/event.py
-"""
-Base reliability event model for ARF.
-"""
+"""Base reliability event model for ARF."""
 import uuid
 from datetime import datetime
 from typing import Optional, Tuple, Dict, Any
@@ -27,17 +25,14 @@ class HealingAction(str, Enum):
     ALERT_TEAM = "alert_team"
 
 
-# -------------------------------------------------------------------
-# NEW / MODIFIED: Unified ForecastResult (Branch 5)
-# -------------------------------------------------------------------
 class ForecastResult(BaseModel):
     """Result of a forecasting analysis with risk classification."""
-    metric: str                           # e.g., "latency", "error_rate", "cpu_util"
-    predicted_value: float                # forecasted value
+    metric: str
+    predicted_value: float
     confidence: float = Field(ge=0, le=1, description="Model confidence in this forecast")
-    trend: str                            # "increasing", "decreasing", "stable"
-    risk_level: str                       # "low", "medium", "high", "critical"
-    time_to_threshold: Optional[float] = None  # minutes until threshold crossing (optional)
+    trend: str
+    risk_level: str
+    time_to_threshold: Optional[float] = None
     forecast_timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -46,7 +41,6 @@ class ReliabilityEvent(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     component: str
     service_mesh: str = "default"
-    # MODIFIED: made optional to handle missing data
     latency_p99: Optional[float] = None
     error_rate: Optional[float] = None
     throughput: int = 0
