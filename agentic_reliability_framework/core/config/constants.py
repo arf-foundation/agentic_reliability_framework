@@ -101,6 +101,19 @@ MAX_EVENTS_STORED: Final[int] = 1000  # Maximum number of events to keep in memo
 BASE_REVENUE_PER_MINUTE: Final[float] = 100.0  # Base revenue per minute (for SLA calculations)
 BASE_USERS: Final[int] = 10000  # Base number of users for impact calculations
 
+# ==================== BAYESIAN DECISION COEFFICIENTS ====================
+# These coefficients are used in the Bayesian expected loss minimization.
+# They should be calibrated based on business priorities (cost of incident, review cost, etc.)
+COST_FP: Final[float] = 10.0          # Cost of approving a bad intent (incident cost)
+COST_IMPACT: Final[float] = 5.0       # Weight on business impact in approve loss
+COST_FN: Final[float] = 8.0           # Cost of denying a good intent
+COST_OPP: Final[float] = 3.0          # Weight on opportunity value in deny loss
+COST_REVIEW: Final[float] = 2.0       # Fixed cost of escalation (human review)
+COST_UNCERTAINTY: Final[float] = 4.0  # Penalty per unit epistemic uncertainty
+
+# Epistemic escalation threshold (used in the gate)
+EPISTEMIC_ESCALATION_THRESHOLD: Final[float] = 0.5
+
 # === SECURITY BOUNDARIES ===
 MAX_API_KEYS: Final[int] = 1  # Only HuggingFace API key
 ALLOWED_ENVIRONMENTS: Final[Tuple[str, ...]] = ("development", "staging", "production")
@@ -603,6 +616,19 @@ __all__ = [
     "CPU_CRITICAL",
     "MEMORY_WARNING",
     "MEMORY_CRITICAL",
+    
+    # === BUSINESS IMPACT CONSTANTS ===
+    "BASE_REVENUE_PER_MINUTE",
+    "BASE_USERS",
+    
+    # === BAYESIAN DECISION COEFFICIENTS ===
+    "COST_FP",
+    "COST_IMPACT",
+    "COST_FN",
+    "COST_OPP",
+    "COST_REVIEW",
+    "COST_UNCERTAINTY",
+    "EPISTEMIC_ESCALATION_THRESHOLD",
     
     # === SECURITY BOUNDARIES ===
     "MAX_API_KEYS",
