@@ -58,8 +58,31 @@ and returns a `HealingIntent` recommendation. Internally it evaluates:
 These pieces are assembled by `AzureInfrastructureSimulator` (or other cloud
 adapters) and produce human‑readable justifications.
 
-Architecture diagram:  
-https://github.com/petter2025us/agentic-reliability-framework/blob/main/docs/architecture.mmd
+## Architecture diagram:  
+
+```mermaid
+flowchart TD
+    subgraph Input["🔌 Input Sources"]
+        Services[Agents / Services]
+        Metrics[Metrics / Logs]
+    end
+
+    Services --> Signals[Observability Signals]
+    Metrics --> Signals
+
+    Signals --> Interpreter[ARF Reliability Interpreter]
+    
+    subgraph Engine["⚙️ ARF Core Engine"]
+        Interpreter --> Risk[Bayesian Risk Engine]
+        Risk --> Intent[Healing Intent Engine]
+    end
+    
+    Intent --> Recovery[Recovery Actions]
+    
+    style Interpreter fill:#e1f5fe,stroke:#01579b
+    style Risk fill:#fff3e0,stroke:#e65100
+    style Intent fill:#e8f5e8,stroke:#1b5e20
+```
 
 ---
 
