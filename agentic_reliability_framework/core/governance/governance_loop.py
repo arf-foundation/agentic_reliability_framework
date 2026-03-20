@@ -228,10 +228,10 @@ class GovernanceLoop:
         }
 
         # -------------------------------------------------------------------
-        # Build HealingIntent
+        # Build HealingIntent with JSON‑serializable metadata
         # -------------------------------------------------------------------
-        # Convert forecasts to JSON‑serializable dicts using model_dump()
-        forecasts_serializable = [f.model_dump() for f in forecasts] if forecasts else []
+        # Convert forecasts to JSON‑serializable dicts using model_dump(mode='json')
+        forecasts_serializable = [f.model_dump(mode='json') for f in forecasts] if forecasts else []
 
         healing_intent = HealingIntent.from_analysis(
             action=recommended_action.value,
@@ -275,11 +275,17 @@ class GovernanceLoop:
             nodes = self.memory.find_similar(event, analysis, k=k)
             similar = []
             for node in nodes:
+                # Convert timestamp to ISO string for JSON serialization
+                timestamp = node.timestamp
+                if hasattr(timestamp, 'isoformat'):
+                    timestamp_str = timestamp.isoformat()
+                else:
+                    timestamp_str = str(timestamp)
                 sim_dict = {
                     "incident_id": node.incident_id,
                     "component": node.component,
                     "severity": node.severity,
-                    "timestamp": node.timestamp,
+                    "timestamp": timestamp_str,
                     "metrics": node.metrics,
                     "similarity_score": node.metadata.get("similarity_score", 0.0),
                 }
