@@ -13,6 +13,7 @@ The design follows ARF governing principles:
 - Immutable contracts between layers
 - Full provenance and explainability
 - Probabilistic uncertainty quantification
+- Deep immutability and cryptographic integrity
 
 Copyright 2025 Juan Petter
 
@@ -39,7 +40,7 @@ import uuid
 from enum import Enum
 import numpy as np
 from types import MappingProxyType
-import hmac
+import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives import serialization
@@ -135,17 +136,12 @@ class RecommendedAction(str, Enum):
 class ConfidenceDistribution:
     """
     Probabilistic confidence representation with deterministic seeding.
-
-    Instead of a single confidence score, this represents a distribution
-    of possible confidence values, allowing for uncertainty quantification.
-    Matches patterns from the risk_engine.py module.
     """
 
     def __init__(self, mean: float, std: float = 0.05, samples: Optional[List[float]] = None):
         self.mean = max(0.0, min(mean, 1.0))
         self.std = max(0.0, min(std, 0.5))
         if samples is None:
-            # Deterministic RNG based on mean and std
             seed = int(hashlib.sha256(f"{self.mean}-{self.std}".encode()).hexdigest(), 16) % (2**32)
             rng = np.random.default_rng(seed)
             self._samples = list(rng.normal(self.mean, self.std, 1000).clip(0, 1))
@@ -154,42 +150,26 @@ class ConfidenceDistribution:
 
     @property
     def p5(self) -> float:
-        """5th percentile (pessimistic)"""
         return float(np.percentile(self._samples, 5))
 
     @property
     def p50(self) -> float:
-        """50th percentile (median)"""
         return float(np.percentile(self._samples, 50))
 
     @property
     def p95(self) -> float:
-        """95th percentile (optimistic)"""
         return float(np.percentile(self._samples, 95))
 
     @property
     def confidence_interval(self) -> Tuple[float, float]:
-        """95% confidence interval"""
         return (self.p5, self.p95)
 
     def to_dict(self) -> Dict[str, float]:
-        """Serialize to dictionary"""
-        return {
-            "mean": self.mean,
-            "std": self.std,
-            "p5": self.p5,
-            "p50": self.p50,
-            "p95": self.p95
-        }
+        return {"mean": self.mean, "std": self.std, "p5": self.p5, "p50": self.p50, "p95": self.p95}
 
     @classmethod
     def from_dict(cls, data: Dict[str, float]) -> "ConfidenceDistribution":
-        """Deserialize from dictionary"""
-        return cls(
-            mean=data["mean"],
-            std=data.get("std", 0.05),
-            samples=None  # Will regenerate on access
-        )
+        return cls(mean=data["mean"], std=data.get("std", 0.05), samples=None)
 
     def __repr__(self) -> str:
         return f"ConfidenceDistribution(mean={self.mean:.3f}, 95% CI=[{self.p5:.3f}, {self.p95:.3f}])"
@@ -199,10 +179,7 @@ class ConfidenceDistribution:
 # Deep Freeze Utility
 # ============================================================================
 def _deep_freeze(obj: Any) -> Any:
-    """
-    Recursively freeze dictionaries, lists, and sets into immutable structures.
-    Dictionaries become MappingProxyType, lists become tuples, sets become frozenset.
-    """
+    """Recursively freeze dictionaries, lists, and sets into immutable structures."""
     if isinstance(obj, dict):
         return MappingProxyType({k: _deep_freeze(v) for k, v in obj.items()})
     elif isinstance(obj, (list, tuple)):
@@ -213,54 +190,57 @@ def _deep_freeze(obj: Any) -> Any:
         return obj
 
 
+def _unfreeze(obj: Any) -> Any:
+    """Recursively convert frozen structures back to mutable Python types."""
+    if isinstance(obj, MappingProxyType):
+        return {k: _unfreeze(v) for k, v in obj.items()}
+    elif isinstance(obj, tuple):
+        return [_unfreeze(v) for v in obj]
+    elif isinstance(obj, frozenset):
+        return {_unfreeze(v) for v in obj}
+    elif isinstance(obj, dict):
+        return {k: _unfreeze(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_unfreeze(v) for v in obj]
+    else:
+        return obj
+
+
 # ============================================================================
 # Healing Intent (Main Class)
 # ============================================================================
 @dataclass(frozen=True, slots=True)
 class HealingIntent:
     """
-    OSS-generated healing recommendation for Enterprise execution
-
-    Enhanced with:
-    - Probabilistic confidence distributions (deterministic)
-    - Risk score and cost projection integration
-    - Decision tree tracking for explainability
-    - Human override audit trail
-    - Partial execution support
-    - Integration with infrastructure governance module
-    - Full backward compatibility with old ARF patterns
-    - Deep immutability for all fields
-    - Causal linkage (parent/root IDs, causal chain)
-    - Execution constraints (retries, timeout, blast radius)
-    - Cryptographic signing for integrity
-    - Expected value computation for decision policy
+    Immutable healing recommendation contract.
+    All mutable fields are deeply frozen after construction.
     """
 
-    # === CORE ACTION FIELDS (Sent to Enterprise) ===
-    action: str                          # Tool name, e.g., "restart_container", "provision_vm"
-    component: str                       # Target component or resource
-    parameters: Dict[str, Any] = field(default_factory=dict)  # Action parameters
-    justification: str = ""              # OSS reasoning chain
+    # === CORE ACTION FIELDS ===
+    action: str
+    component: str
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    justification: str = ""
 
     # === CONFIDENCE & METADATA ===
-    confidence: float = 0.85             # OSS confidence score (0.0 to 1.0)
-    confidence_distribution: Optional[Dict[str, float]] = None  # Probabilistic confidence
-    incident_id: str = ""                # Source incident identifier
-    detected_at: float = field(default_factory=time.time)  # When OSS detected
+    confidence: float = 0.85
+    confidence_distribution: Optional[Dict[str, float]] = None
+    incident_id: str = ""
+    detected_at: float = field(default_factory=time.time)
 
     # === RISK AND COST INTEGRATION ===
-    risk_score: Optional[float] = None   # From risk engine (0-1)
-    risk_factors: Optional[Dict[str, float]] = None  # Breakdown by factor
-    cost_projection: Optional[float] = None  # Estimated cost impact
-    cost_confidence_interval: Optional[Tuple[float, float]] = None  # 95% CI
-    recommended_action: Optional[RecommendedAction] = None  # From risk engine
+    risk_score: Optional[float] = None
+    risk_factors: Optional[Dict[str, float]] = None
+    cost_projection: Optional[float] = None
+    cost_confidence_interval: Optional[Tuple[float, float]] = None
+    recommended_action: Optional[RecommendedAction] = None
 
     # === DECISION TRACKING ===
-    decision_tree: Optional[List[Dict[str, Any]]] = None  # How decision was reached
-    alternative_actions: Optional[List[Dict[str, Any]]] = None  # Alternatives considered
-    risk_profile: Optional[str] = None  # Risk tolerance used (conservative/moderate/aggressive)
+    decision_tree: Optional[List[Dict[str, Any]]] = None
+    alternative_actions: Optional[List[Dict[str, Any]]] = None
+    risk_profile: Optional[str] = None
 
-    # === OSS ANALYSIS CONTEXT (Stays in OSS) ===
+    # === OSS ANALYSIS CONTEXT ===
     reasoning_chain: Optional[List[Dict[str, Any]]] = None
     similar_incidents: Optional[List[Dict[str, Any]]] = None
     rag_similarity_score: Optional[float] = None
@@ -270,7 +250,7 @@ class HealingIntent:
     intent_id: str = field(default_factory=lambda: f"intent_{uuid.uuid4().hex[:16]}")
     created_at: float = field(default_factory=time.time)
 
-    # === EXECUTION METADATA (Set by Enterprise) ===
+    # === EXECUTION METADATA ===
     status: IntentStatus = IntentStatus.CREATED
     execution_id: Optional[str] = None
     executed_at: Optional[float] = None
@@ -278,112 +258,85 @@ class HealingIntent:
     enterprise_metadata: Dict[str, Any] = field(default_factory=dict)
 
     # === HUMAN INTERACTION TRACKING ===
-    human_overrides: List[Dict[str, Any]] = field(default_factory=list)  # Audit trail
-    approvals: List[Dict[str, Any]] = field(default_factory=list)  # Who approved what
-    comments: List[Dict[str, Any]] = field(default_factory=list)  # Human comments
+    human_overrides: List[Dict[str, Any]] = field(default_factory=list)
+    approvals: List[Dict[str, Any]] = field(default_factory=list)
+    comments: List[Dict[str, Any]] = field(default_factory=list)
 
     # === OSS EDITION METADATA ===
     oss_edition: str = OSS_EDITION
     oss_license: str = OSS_LICENSE
-    requires_enterprise: bool = True  # Always True for OSS-generated intents
-    execution_allowed: bool = EXECUTION_ALLOWED  # From OSS constants
+    requires_enterprise: bool = True
+    execution_allowed: bool = EXECUTION_ALLOWED
 
     # === INFRASTRUCTURE INTEGRATION ===
-    infrastructure_intent_id: Optional[str] = None  # Link to infrastructure intent if any
-    policy_violations: List[str] = field(default_factory=list)  # From policy engine
-    infrastructure_intent: Optional[Dict[str, Any]] = None  # Original infrastructure intent
+    infrastructure_intent_id: Optional[str] = None
+    policy_violations: List[str] = field(default_factory=list)
+    infrastructure_intent: Optional[Dict[str, Any]] = None
 
-    # === EXTENDED METADATA ===
-    metadata: Dict[str, Any] = field(default_factory=dict)  # Will be deep-frozen
+    # === EXTENDED METADATA (deep frozen) ===
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-    # === CAUSAL LINKAGE (NEW) ===
-    parent_intent_id: Optional[str] = None        # Parent intent that triggered this one
-    root_intent_id: Optional[str] = None          # Root of the causal chain
-    causal_chain: List[str] = field(default_factory=list)  # Ordered list of intent IDs
+    # === CAUSAL LINKAGE ===
+    parent_intent_id: Optional[str] = None
+    root_intent_id: Optional[str] = None
+    causal_chain: Tuple[str, ...] = field(default_factory=tuple)
 
-    # === EXECUTION CONSTRAINTS (NEW) ===
+    # === EXECUTION CONSTRAINTS (deep frozen) ===
     execution_constraints: Dict[str, Any] = field(default_factory=dict)
-    # Example: {"max_retries": 3, "timeout_seconds": 300, "allowed_regions": ["us-east-1"]}
 
-    # === CRYPTOGRAPHIC INTEGRITY (NEW) ===
-    signature: Optional[str] = None               # Base64-encoded signature
-    public_key_fingerprint: Optional[str] = None  # For verification
+    # === CRYPTOGRAPHIC INTEGRITY ===
+    signature: Optional[str] = None
+    public_key_fingerprint: Optional[str] = None
 
-    # Class constants for validation
+    # Class constants
     MIN_CONFIDENCE: ClassVar[float] = 0.0
     MAX_CONFIDENCE: ClassVar[float] = 1.0
     MAX_JUSTIFICATION_LENGTH: ClassVar[int] = 5000
     MAX_PARAMETERS_SIZE: ClassVar[int] = 100
     MAX_SIMILAR_INCIDENTS: ClassVar[int] = MAX_SIMILARITY_CACHE
-    VERSION: ClassVar[str] = "2.1.0"  # Minor bump for new features
-    MAX_INTENT_AGE_SECONDS: ClassVar[int] = 3600  # 1 hour default TTL
+    VERSION: ClassVar[str] = "2.1.0"
+    MAX_INTENT_AGE_SECONDS: ClassVar[int] = 3600
 
     def __post_init__(self) -> None:
-        """Validate HealingIntent after initialization and deep-freeze mutable fields."""
+        """Validate and deeply freeze mutable fields."""
         self._validate_oss_boundaries()
         self._validate_risk_integration()
         self._validate_causal_chain()
         self._validate_execution_constraints()
 
-        # Deep freeze metadata and constraints
-        if isinstance(self.metadata, dict):
-            object.__setattr__(self, 'metadata', _deep_freeze(self.metadata))
-        if isinstance(self.execution_constraints, dict):
-            object.__setattr__(self, 'execution_constraints', _deep_freeze(self.execution_constraints))
-
-        # Ensure causal_chain is a tuple (immutable)
-        if isinstance(self.causal_chain, list):
-            object.__setattr__(self, 'causal_chain', tuple(self.causal_chain))
-
-        # Normalize the root intent ID if missing
-        if self.root_intent_id is None and self.intent_id:
+        # Deep freeze
+        object.__setattr__(self, 'metadata', _deep_freeze(self.metadata))
+        object.__setattr__(self, 'execution_constraints', _deep_freeze(self.execution_constraints))
+        object.__setattr__(self, 'causal_chain', tuple(self.causal_chain))
+        if self.root_intent_id is None:
             object.__setattr__(self, 'root_intent_id', self.intent_id)
 
-    # ------------------------------------------------------------------------
-    # Validation helpers
-    # ------------------------------------------------------------------------
     def _validate_oss_boundaries(self) -> None:
-        errors: List[str] = []
-
-        # Confidence range
+        errors = []
         if not (self.MIN_CONFIDENCE <= self.confidence <= self.MAX_CONFIDENCE):
             errors.append(f"Confidence must be between {self.MIN_CONFIDENCE} and {self.MAX_CONFIDENCE}, got {self.confidence}")
-
-        # Justification length
         if len(self.justification) > self.MAX_JUSTIFICATION_LENGTH:
             errors.append(f"Justification exceeds max length {self.MAX_JUSTIFICATION_LENGTH}")
-
-        # Action and component
         if not self.action or not self.action.strip():
             errors.append("Action cannot be empty")
         if not self.component or not self.component.strip():
             errors.append("Component cannot be empty")
-
-        # Parameters size
         if len(self.parameters) > self.MAX_PARAMETERS_SIZE:
             errors.append(f"Too many parameters: {len(self.parameters)} > {self.MAX_PARAMETERS_SIZE}")
-
-        # JSON serializable check
         try:
             json.dumps(self.parameters)
         except (TypeError, ValueError) as e:
             errors.append(f"Parameters must be JSON serializable: {e}")
-
         try:
             json.dumps(dict(self.metadata))
         except (TypeError, ValueError) as e:
             errors.append(f"Metadata must be JSON serializable: {e}")
-
         try:
             json.dumps(dict(self.execution_constraints))
         except (TypeError, ValueError) as e:
             errors.append(f"Execution constraints must be JSON serializable: {e}")
-
-        # Similar incidents
         if self.similar_incidents and len(self.similar_incidents) > self.MAX_SIMILAR_INCIDENTS:
             errors.append(f"Too many similar incidents: {len(self.similar_incidents)} > {self.MAX_SIMILAR_INCIDENTS}")
-
-        # OSS edition restrictions
         if self.oss_edition == OSS_EDITION:
             if self.execution_allowed:
                 errors.append("Execution not allowed in OSS edition")
@@ -393,7 +346,6 @@ class HealingIntent:
                 errors.append("executed_at should not be set in OSS edition")
             if self.execution_id is not None:
                 errors.append("execution_id should not be set in OSS edition")
-
         if errors:
             raise ValidationError(f"HealingIntent validation failed:\n" + "\n".join(f"  • {error}" for error in errors))
 
@@ -414,7 +366,6 @@ class HealingIntent:
             raise ValidationError("root_intent_id must match first element of causal_chain")
 
     def _validate_execution_constraints(self) -> None:
-        # Basic type checks; deeper validation is application-specific
         if "max_retries" in self.execution_constraints:
             if not isinstance(self.execution_constraints["max_retries"], int) or self.execution_constraints["max_retries"] < 0:
                 raise ValidationError("execution_constraints.max_retries must be a non‑negative integer")
@@ -427,16 +378,11 @@ class HealingIntent:
     # ------------------------------------------------------------------------
     @property
     def deterministic_id(self) -> str:
-        """
-        Deterministic ID for idempotency based on action + component + parameters (excluding temporal fields).
-        This ensures the same intent yields the same ID regardless of creation time.
-        """
         data = {
             "action": self.action,
             "component": self.component,
             "parameters": self._normalize_parameters(self.parameters),
             "incident_id": self.incident_id,
-            # detected_at intentionally omitted for idempotency
             "oss_edition": self.oss_edition,
         }
         json_str = json.dumps(data, sort_keys=True, default=str)
@@ -449,33 +395,59 @@ class HealingIntent:
 
     @property
     def is_stale(self) -> bool:
-        """Check if the intent has exceeded its TTL."""
         return self.age_seconds > self.MAX_INTENT_AGE_SECONDS
 
     @property
     def schema_hash(self) -> str:
         """
-        Return a hash of the intent's serialized data (excluding OSS context) for contract verification.
+        Hash of the intent's core data (excluding ephemeral and computed fields)
+        for contract verification.
         """
-        data = self.to_dict(include_oss_context=False)
-        # Remove fields that might change across versions (signature, IDs that may vary)
-        data.pop("signature", None)
-        data.pop("public_key_fingerprint", None)
-        data.pop("execution_id", None)
-        data.pop("executed_at", None)
-        data.pop("execution_result", None)
-        data.pop("enterprise_metadata", None)
+        data = self._get_canonical_data()
         json_str = json.dumps(data, sort_keys=True, default=str)
         return hashlib.sha256(json_str.encode()).hexdigest()
 
+    def _get_canonical_data(self) -> Dict[str, Any]:
+        """Return a plain dict of core fields without computed or ephemeral values."""
+        return {
+            "action": self.action,
+            "component": self.component,
+            "parameters": _unfreeze(self.parameters),
+            "justification": self.justification,
+            "confidence": self.confidence,
+            "confidence_distribution": self.confidence_distribution,
+            "incident_id": self.incident_id,
+            "detected_at": self.detected_at,
+            "risk_score": self.risk_score,
+            "risk_factors": self.risk_factors,
+            "cost_projection": self.cost_projection,
+            "cost_confidence_interval": self.cost_confidence_interval,
+            "recommended_action": self.recommended_action.value if self.recommended_action else None,
+            "decision_tree": _unfreeze(self.decision_tree),
+            "alternative_actions": _unfreeze(self.alternative_actions),
+            "risk_profile": self.risk_profile,
+            "reasoning_chain": _unfreeze(self.reasoning_chain),
+            "similar_incidents": _unfreeze(self.similar_incidents),
+            "rag_similarity_score": self.rag_similarity_score,
+            "source": self.source.value,
+            "intent_id": self.intent_id,
+            "created_at": self.created_at,
+            "oss_edition": self.oss_edition,
+            "oss_license": self.oss_license,
+            "requires_enterprise": self.requires_enterprise,
+            "execution_allowed": self.execution_allowed,
+            "infrastructure_intent_id": self.infrastructure_intent_id,
+            "policy_violations": list(self.policy_violations),
+            "infrastructure_intent": _unfreeze(self.infrastructure_intent),
+            "metadata": _unfreeze(self.metadata),
+            "parent_intent_id": self.parent_intent_id,
+            "root_intent_id": self.root_intent_id,
+            "causal_chain": list(self.causal_chain),
+            "execution_constraints": _unfreeze(self.execution_constraints),
+        }
+
     @property
     def expected_value(self) -> float:
-        """
-        Compute a simple expected value for decision policy.
-        Higher value indicates more desirable to approve (or execute).
-        Formula: confidence * (1 - risk) - normalized_cost (cost scaled to [0,1]).
-        """
-        # Normalize cost projection: assume max cost $10,000 for now (configurable)
         max_cost = 10000.0
         normalized_cost = min(1.0, (self.cost_projection or 0.0) / max_cost)
         risk = self.risk_score or 0.0
@@ -483,16 +455,11 @@ class HealingIntent:
 
     @property
     def is_executable(self) -> bool:
-        """Check if intent is ready for execution"""
         if self.oss_edition == OSS_EDITION:
             return False
         if self.is_stale:
             return False
-        return self.status in [
-            IntentStatus.CREATED,
-            IntentStatus.PENDING_EXECUTION,
-            IntentStatus.APPROVED
-        ]
+        return self.status in [IntentStatus.CREATED, IntentStatus.PENDING_EXECUTION, IntentStatus.APPROVED]
 
     @property
     def is_oss_advisory(self) -> bool:
@@ -510,33 +477,132 @@ class HealingIntent:
         return None
 
     # ------------------------------------------------------------------------
-    # Public methods
+    # Cloning and building
+    # ------------------------------------------------------------------------
+    def _clone(self, **updates) -> "HealingIntent":
+        """Create a new intent by applying updates to the current one."""
+        plain = self._to_plain_dict()
+        plain.update(updates)
+        # Ensure proper types for frozen fields
+        return HealingIntent(**plain)
+
+    def _to_plain_dict(self) -> Dict[str, Any]:
+        """Convert the intent to a plain dict suitable for constructor."""
+        # Start with all fields as they are (they are already frozen, but we need to unwrap proxies)
+        data = {
+            "action": self.action,
+            "component": self.component,
+            "parameters": _unfreeze(self.parameters),
+            "justification": self.justification,
+            "confidence": self.confidence,
+            "confidence_distribution": self.confidence_distribution,
+            "incident_id": self.incident_id,
+            "detected_at": self.detected_at,
+            "risk_score": self.risk_score,
+            "risk_factors": self.risk_factors,
+            "cost_projection": self.cost_projection,
+            "cost_confidence_interval": self.cost_confidence_interval,
+            "recommended_action": self.recommended_action,
+            "decision_tree": _unfreeze(self.decision_tree),
+            "alternative_actions": _unfreeze(self.alternative_actions),
+            "risk_profile": self.risk_profile,
+            "reasoning_chain": _unfreeze(self.reasoning_chain),
+            "similar_incidents": _unfreeze(self.similar_incidents),
+            "rag_similarity_score": self.rag_similarity_score,
+            "source": self.source,
+            "intent_id": self.intent_id,
+            "created_at": self.created_at,
+            "status": self.status,
+            "execution_id": self.execution_id,
+            "executed_at": self.executed_at,
+            "execution_result": _unfreeze(self.execution_result),
+            "enterprise_metadata": _unfreeze(self.enterprise_metadata),
+            "human_overrides": _unfreeze(self.human_overrides),
+            "approvals": _unfreeze(self.approvals),
+            "comments": _unfreeze(self.comments),
+            "oss_edition": self.oss_edition,
+            "oss_license": self.oss_license,
+            "requires_enterprise": self.requires_enterprise,
+            "execution_allowed": self.execution_allowed,
+            "infrastructure_intent_id": self.infrastructure_intent_id,
+            "policy_violations": list(self.policy_violations),
+            "infrastructure_intent": _unfreeze(self.infrastructure_intent),
+            "metadata": _unfreeze(self.metadata),
+            "parent_intent_id": self.parent_intent_id,
+            "root_intent_id": self.root_intent_id,
+            "causal_chain": list(self.causal_chain),
+            "execution_constraints": _unfreeze(self.execution_constraints),
+            "signature": self.signature,
+            "public_key_fingerprint": self.public_key_fingerprint,
+        }
+        return data
+
+    def with_execution_result(
+        self,
+        execution_id: str,
+        executed_at: float,
+        result: Dict[str, Any],
+        status: IntentStatus = IntentStatus.COMPLETED,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> "HealingIntent":
+        updates = {
+            "status": status,
+            "execution_id": execution_id,
+            "executed_at": executed_at,
+            "execution_result": result,
+            "enterprise_metadata": {**(self.enterprise_metadata or {}), **(metadata or {})},
+        }
+        return self._clone(**updates)
+
+    def with_human_approval(
+        self,
+        approver: str,
+        approval_time: float,
+        comments: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None
+    ) -> "HealingIntent":
+        approval_record = {"approver": approver, "timestamp": approval_time, "comments": comments, "overrides": overrides}
+        new_approvals = list(self.approvals) + [approval_record]
+        new_overrides = list(self.human_overrides)
+        if overrides:
+            new_overrides.append({"overrider": approver, "timestamp": approval_time, "overrides": overrides, "reason": comments})
+        new_comments = list(self.comments)
+        if comments:
+            new_comments.append({"author": approver, "timestamp": approval_time, "comment": comments})
+        updates = {
+            "status": IntentStatus.APPROVED_WITH_OVERRIDES if overrides else IntentStatus.APPROVED,
+            "human_overrides": new_overrides,
+            "approvals": new_approvals,
+            "comments": new_comments,
+        }
+        return self._clone(**updates)
+
+    def mark_as_sent_to_enterprise(self) -> "HealingIntent":
+        return self._clone(status=IntentStatus.PENDING_EXECUTION)
+
+    def mark_as_oss_advisory(self) -> "HealingIntent":
+        return self._clone(status=IntentStatus.OSS_ADVISORY_ONLY, execution_allowed=False)
+
+    # ------------------------------------------------------------------------
+    # Cryptographic signing
     # ------------------------------------------------------------------------
     def sign(self, private_key: Any) -> "HealingIntent":
-        """
-        Sign the intent using the provided private key.
-        Returns a new signed intent.
-        """
+        """Return a new signed intent."""
         data_to_sign = self._get_signable_data()
         signature = private_key.sign(
             data_to_sign.encode(),
             padding.PKCS1v15(),
             hashes.SHA256()
         )
-        import base64
         b64_sig = base64.b64encode(signature).decode()
-        return HealingIntent(
-            **{**asdict(self),
-               "signature": b64_sig,
-               "public_key_fingerprint": self._get_public_key_fingerprint(private_key.public_key())}
-        )
+        fp = self._get_public_key_fingerprint(private_key.public_key())
+        return self._clone(signature=b64_sig, public_key_fingerprint=fp)
 
     def verify(self, public_key: Any) -> bool:
-        """Verify the signature using the provided public key."""
+        """Verify the signature."""
         if not self.signature:
             return False
         data_to_verify = self._get_signable_data()
-        import base64
         try:
             signature_bytes = base64.b64decode(self.signature)
             public_key.verify(
@@ -550,34 +616,20 @@ class HealingIntent:
             return False
 
     def _get_signable_data(self) -> str:
-        """Return a canonical string of the intent's core fields for signing."""
-        # Omit signature, public key fingerprint, and any execution ephemera
-        data = {
-            "intent_id": self.intent_id,
-            "deterministic_id": self.deterministic_id,
-            "action": self.action,
-            "component": self.component,
-            "parameters": self.parameters,
-            "justification": self.justification,
-            "incident_id": self.incident_id,
-            "detected_at": self.detected_at,
-            "created_at": self.created_at,
-            "risk_score": self.risk_score,
-            "cost_projection": self.cost_projection,
-            "source": self.source.value,
-            "policy_violations": self.policy_violations,
-            "parent_intent_id": self.parent_intent_id,
-            "root_intent_id": self.root_intent_id,
-            "causal_chain": list(self.causal_chain),
-            "execution_constraints": dict(self.execution_constraints),
-            "metadata": dict(self.metadata),
-        }
-        # Sort keys for deterministic output
-        json_str = json.dumps(data, sort_keys=True, default=str)
-        return json_str
+        """Return canonical string of core fields for signing."""
+        data = self._get_canonical_data()
+        # Remove signature and fingerprint
+        data.pop("signature", None)
+        data.pop("public_key_fingerprint", None)
+        # Remove any ephemeral execution fields that could change after signing
+        data.pop("execution_id", None)
+        data.pop("executed_at", None)
+        data.pop("execution_result", None)
+        data.pop("enterprise_metadata", None)
+        data.pop("status", None)
+        return json.dumps(data, sort_keys=True, default=str)
 
     def _get_public_key_fingerprint(self, public_key: Any) -> str:
-        """Return a SHA-256 fingerprint of the public key."""
         pem = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
@@ -585,15 +637,15 @@ class HealingIntent:
         return hashlib.sha256(pem).hexdigest()[:16]
 
     # ------------------------------------------------------------------------
-    # Serialization
+    # Serialization and external interfaces
     # ------------------------------------------------------------------------
     def to_enterprise_request(self) -> Dict[str, Any]:
-        """Convert to Enterprise API request format (excludes OSS context)."""
+        """Payload for Enterprise API."""
         return {
             "intent_id": self.deterministic_id,
             "action": self.action,
             "component": self.component,
-            "parameters": self.parameters,
+            "parameters": _unfreeze(self.parameters),
             "justification": self.justification,
             "confidence": self.confidence,
             "confidence_interval": self.confidence_interval,
@@ -614,7 +666,7 @@ class HealingIntent:
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
             "causal_chain": list(self.causal_chain),
-            "execution_constraints": dict(self.execution_constraints),
+            "execution_constraints": _unfreeze(self.execution_constraints),
             "signature": self.signature,
             "public_key_fingerprint": self.public_key_fingerprint,
             "oss_metadata": {
@@ -624,7 +676,7 @@ class HealingIntent:
                 "source": self.source.value,
                 "is_oss_advisory": self.is_oss_advisory,
                 "risk_factors": self.risk_factors,
-                "policy_violations_count": len(self.policy_violations) if self.policy_violations else 0,
+                "policy_violations_count": len(self.policy_violations),
                 "confidence_basis": self._get_confidence_basis(),
                 "learning_applied": False,
                 "learning_reason": "OSS advisory mode does not persist or learn from outcomes",
@@ -648,22 +700,15 @@ class HealingIntent:
         return "policy_only"
 
     def to_dict(self, include_oss_context: bool = False) -> Dict[str, Any]:
-        data = asdict(self)
+        """Full dictionary representation."""
+        data = self._to_plain_dict()
         # Convert enums to strings
         if "source" in data and isinstance(data["source"], IntentSource):
-            data["source"] = self.source.value
+            data["source"] = data["source"].value
         if "status" in data and isinstance(data["status"], IntentStatus):
-            data["status"] = self.status.value
+            data["status"] = data["status"].value
         if "recommended_action" in data and isinstance(data["recommended_action"], RecommendedAction):
-            data["recommended_action"] = self.recommended_action.value if self.recommended_action else None
-
-        # Convert proxy objects to dicts for serialization
-        if "metadata" in data and isinstance(data["metadata"], Mapping):
-            data["metadata"] = dict(data["metadata"])
-        if "execution_constraints" in data and isinstance(data["execution_constraints"], Mapping):
-            data["execution_constraints"] = dict(data["execution_constraints"])
-        if "causal_chain" in data and isinstance(data["causal_chain"], tuple):
-            data["causal_chain"] = list(data["causal_chain"])
+            data["recommended_action"] = data["recommended_action"].value if data["recommended_action"] else None
 
         if not include_oss_context:
             data.pop("reasoning_chain", None)
@@ -684,300 +729,22 @@ class HealingIntent:
         data["is_stale"] = self.is_stale
         data["expected_value"] = self.expected_value
         data["schema_hash"] = self.schema_hash
-
         return data
 
-    # ------------------------------------------------------------------------
-    # Builder methods (return new intents)
-    # ------------------------------------------------------------------------
-    def with_execution_result(
-        self,
-        execution_id: str,
-        executed_at: float,
-        result: Dict[str, Any],
-        status: IntentStatus = IntentStatus.COMPLETED,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> "HealingIntent":
-        return HealingIntent(
-            **{**asdict(self),
-               "status": status,
-               "execution_id": execution_id,
-               "executed_at": executed_at,
-               "execution_result": result,
-               "enterprise_metadata": {**(self.enterprise_metadata or {}), **(metadata or {})}
-            }
-        )
-
-    def with_human_approval(
-        self,
-        approver: str,
-        approval_time: float,
-        comments: Optional[str] = None,
-        overrides: Optional[Dict[str, Any]] = None
-    ) -> "HealingIntent":
-        approval_record = {"approver": approver, "timestamp": approval_time, "comments": comments, "overrides": overrides}
-        new_approvals = list(self.approvals) + [approval_record]
-        new_overrides = list(self.human_overrides)
-        if overrides:
-            new_overrides.append({"overrider": approver, "timestamp": approval_time, "overrides": overrides, "reason": comments})
-        new_comments = list(self.comments)
-        if comments:
-            new_comments.append({"author": approver, "timestamp": approval_time, "comment": comments})
-        return HealingIntent(
-            **{**asdict(self),
-               "status": IntentStatus.APPROVED_WITH_OVERRIDES if overrides else IntentStatus.APPROVED,
-               "human_overrides": new_overrides,
-               "approvals": new_approvals,
-               "comments": new_comments
-            }
-        )
-
-    def mark_as_sent_to_enterprise(self) -> "HealingIntent":
-        return HealingIntent(**{**asdict(self), "status": IntentStatus.PENDING_EXECUTION})
-
-    def mark_as_oss_advisory(self) -> "HealingIntent":
-        return HealingIntent(**{**asdict(self), "status": IntentStatus.OSS_ADVISORY_ONLY, "execution_allowed": False})
-
-    # ------------------------------------------------------------------------
-    # Factory methods
-    # ------------------------------------------------------------------------
-    @classmethod
-    def from_infrastructure_intent(
-        cls,
-        infrastructure_intent: Any,
-        action: str,
-        component: str,
-        parameters: Dict[str, Any],
-        justification: str,
-        confidence: float = 0.85,
-        risk_score: Optional[float] = None,
-        risk_factors: Optional[Dict[str, float]] = None,
-        cost_projection: Optional[float] = None,
-        policy_violations: Optional[List[str]] = None,
-        recommended_action: Optional[RecommendedAction] = None,
-        source: IntentSource = IntentSource.INFRASTRUCTURE_ANALYSIS,
-        metadata: Optional[Dict[str, Any]] = None,
-        parent_intent_id: Optional[str] = None,
-        execution_constraints: Optional[Dict[str, Any]] = None,
-    ) -> "HealingIntent":
-        infrastructure_intent_id = getattr(infrastructure_intent, 'intent_id', None)
-        if hasattr(infrastructure_intent, 'model_dump'):
-            intent_dict = infrastructure_intent.model_dump()
-        elif hasattr(infrastructure_intent, 'to_dict'):
-            intent_dict = infrastructure_intent.to_dict()
-        else:
-            intent_dict = {"type": str(type(infrastructure_intent))}
-
-        causal_chain = []
-        if parent_intent_id:
-            causal_chain.append(parent_intent_id)
-        causal_chain.append(cls.intent_id)  # This will be overwritten; we'll adjust after creation
-
-        intent = cls(
-            action=action,
-            component=component,
-            parameters=parameters,
-            justification=justification,
-            confidence=confidence,
-            risk_score=risk_score,
-            risk_factors=risk_factors,
-            cost_projection=cost_projection,
-            policy_violations=policy_violations or [],
-            recommended_action=recommended_action,
-            source=source,
-            infrastructure_intent_id=infrastructure_intent_id,
-            infrastructure_intent=intent_dict,
-            metadata=metadata or {},
-            parent_intent_id=parent_intent_id,
-            execution_constraints=execution_constraints or {},
-            # root_intent_id will be set in __post_init__
-            # causal_chain will be normalized later
-        )
-        # Fix causal_chain after we have the final intent_id
-        new_chain = list(causal_chain)
-        if new_chain and new_chain[-1] != intent.intent_id:
-            new_chain.append(intent.intent_id)
-        object.__setattr__(intent, 'causal_chain', tuple(new_chain))
-        if parent_intent_id and not intent.root_intent_id:
-            object.__setattr__(intent, 'root_intent_id', new_chain[0])
-        return intent
-
-    @classmethod
-    def from_analysis(
-        cls,
-        action: str,
-        component: str,
-        parameters: Dict[str, Any],
-        justification: str,
-        confidence: float,
-        confidence_std: float = 0.05,
-        similar_incidents: Optional[List[Dict[str, Any]]] = None,
-        reasoning_chain: Optional[List[Dict[str, Any]]] = None,
-        incident_id: str = "",
-        source: IntentSource = IntentSource.OSS_ANALYSIS,
-        rag_similarity_score: Optional[float] = None,
-        risk_score: Optional[float] = None,
-        cost_projection: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        policy_violations: Optional[List[str]] = None,
-        parent_intent_id: Optional[str] = None,
-        execution_constraints: Optional[Dict[str, Any]] = None,
-    ) -> "HealingIntent":
-        if similar_incidents and len(similar_incidents) > cls.MAX_SIMILAR_INCIDENTS:
-            similar_incidents = similar_incidents[:cls.MAX_SIMILAR_INCIDENTS]
-
-        conf_dist = ConfidenceDistribution(confidence, confidence_std)
-        enhanced_confidence = confidence
-        if similar_incidents:
-            similarity_scores = [inc.get("similarity", 0.0) for inc in similar_incidents if "similarity" in inc]
-            if similarity_scores:
-                avg_similarity = sum(similarity_scores) / len(similarity_scores)
-                confidence_boost = min(0.2, avg_similarity * 0.3)
-                enhanced_confidence = min(confidence * (1.0 + confidence_boost), cls.MAX_CONFIDENCE)
-
-        final_rag_score = rag_similarity_score
-        if final_rag_score is None and similar_incidents:
-            top_similarities = [inc.get("similarity", 0.0) for inc in similar_incidents[:3] if "similarity" in inc]
-            if top_similarities:
-                final_rag_score = sum(top_similarities) / len(top_similarities)
-
-        causal_chain = []
-        if parent_intent_id:
-            causal_chain.append(parent_intent_id)
-        # The current intent ID will be appended later
-
-        intent = cls(
-            action=action,
-            component=component,
-            parameters=parameters,
-            justification=justification,
-            confidence=enhanced_confidence,
-            confidence_distribution=conf_dist.to_dict(),
-            incident_id=incident_id,
-            similar_incidents=similar_incidents,
-            reasoning_chain=reasoning_chain,
-            rag_similarity_score=final_rag_score,
-            source=source,
-            risk_score=risk_score,
-            cost_projection=cost_projection,
-            metadata=metadata or {},
-            policy_violations=policy_violations or [],
-            parent_intent_id=parent_intent_id,
-            execution_constraints=execution_constraints or {},
-        )
-        # After creation, append own ID to causal chain
-        new_chain = list(causal_chain)
-        new_chain.append(intent.intent_id)
-        object.__setattr__(intent, 'causal_chain', tuple(new_chain))
-        if parent_intent_id and not intent.root_intent_id:
-            object.__setattr__(intent, 'root_intent_id', new_chain[0])
-        return intent
-
-    @classmethod
-    def from_rag_recommendation(
-        cls,
-        action: str,
-        component: str,
-        parameters: Dict[str, Any],
-        rag_similarity_score: float,
-        similar_incidents: List[Dict[str, Any]],
-        justification_template: str = "Based on {count} similar historical incidents with {success_rate:.0%} success rate",
-        success_rate: Optional[float] = None,
-        risk_score: Optional[float] = None,
-        cost_projection: Optional[float] = None,
-    ) -> "HealingIntent":
-        if not similar_incidents:
-            raise ValidationError("RAG recommendation requires similar incidents")
-        if success_rate is None:
-            successful = sum(1 for inc in similar_incidents if inc.get("success", False))
-            success_rate = successful / len(similar_incidents)
-        justification = justification_template.format(
-            count=len(similar_incidents),
-            success_rate=success_rate or 0.0,
-            action=action,
-            component=component,
-        )
-        base_confidence = rag_similarity_score * 0.8
-        if success_rate:
-            base_confidence = base_confidence * (0.7 + success_rate * 0.3)
-        return cls.from_analysis(
-            action=action,
-            component=component,
-            parameters=parameters,
-            justification=justification,
-            confidence=min(base_confidence, 0.95),
-            similar_incidents=similar_incidents,
-            incident_id=similar_incidents[0].get("incident_id", "") if similar_incidents else "",
-            source=IntentSource.RAG_SIMILARITY,
-            rag_similarity_score=rag_similarity_score,
-            risk_score=risk_score,
-            cost_projection=cost_projection,
-        )
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HealingIntent":
-        clean_data = data.copy()
-        if "source" in clean_data and isinstance(clean_data["source"], str):
-            clean_data["source"] = IntentSource(clean_data["source"])
-        if "status" in clean_data and isinstance(clean_data["status"], str):
-            clean_data["status"] = IntentStatus(clean_data["status"])
-        if "recommended_action" in clean_data and isinstance(clean_data["recommended_action"], str):
-            try:
-                clean_data["recommended_action"] = RecommendedAction(clean_data["recommended_action"])
-            except ValueError:
-                clean_data["recommended_action"] = None
-        # Remove computed fields
-        for field in ["deterministic_id", "age_seconds", "is_executable", "is_oss_advisory",
-                      "requires_enterprise_upgrade", "version", "confidence_interval",
-                      "is_stale", "expected_value", "schema_hash"]:
-            clean_data.pop(field, None)
-        return cls(**clean_data)
-
-    # ------------------------------------------------------------------------
-    # Helper: parameter normalization (preserve order for lists)
-    # ------------------------------------------------------------------------
-    def _normalize_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        normalized: Dict[str, Any] = {}
-        for key, value in sorted(params.items()):
-            normalized[key] = self._normalize_value(value)
-        return normalized
-
-    def _normalize_value(self, value: Any) -> Any:
-        if isinstance(value, (int, float, str, bool, type(None))):
-            return value
-        elif isinstance(value, set):
-            # Sets are unordered -> sort
-            return tuple(sorted(self._normalize_value(v) for v in value))
-        elif isinstance(value, (list, tuple)):
-            # Preserve order for sequences
-            return tuple(self._normalize_value(v) for v in value)
-        elif isinstance(value, dict):
-            return self._normalize_parameters(value)
-        elif hasattr(value, '__dict__'):
-            return self._normalize_parameters(value.__dict__)
-        else:
-            try:
-                return str(value)
-            except Exception:
-                return f"<unserializable:{type(value).__name__}>"
-
-    # ------------------------------------------------------------------------
-    # OSS context and summary
-    # ------------------------------------------------------------------------
     def get_oss_context(self) -> Dict[str, Any]:
         return {
-            "reasoning_chain": self.reasoning_chain,
-            "similar_incidents": self.similar_incidents,
+            "reasoning_chain": _unfreeze(self.reasoning_chain),
+            "similar_incidents": _unfreeze(self.similar_incidents),
             "rag_similarity_score": self.rag_similarity_score,
-            "decision_tree": self.decision_tree,
-            "alternative_actions": self.alternative_actions,
+            "decision_tree": _unfreeze(self.decision_tree),
+            "alternative_actions": _unfreeze(self.alternative_actions),
             "analysis_timestamp": datetime.fromtimestamp(self.detected_at).isoformat(),
             "source": self.source.value,
             "created_at": datetime.fromtimestamp(self.created_at).isoformat(),
             "oss_edition": self.oss_edition,
             "is_oss_advisory": self.is_oss_advisory,
-            "infrastructure_intent": self.infrastructure_intent,
-            "metadata": dict(self.metadata),
+            "infrastructure_intent": _unfreeze(self.infrastructure_intent),
+            "metadata": _unfreeze(self.metadata),
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
             "causal_chain": list(self.causal_chain),
@@ -1024,6 +791,214 @@ class HealingIntent:
         if self.human_overrides:
             summary["overrides_count"] = len(self.human_overrides)
         return summary
+
+    # ------------------------------------------------------------------------
+    # Factory methods
+    # ------------------------------------------------------------------------
+    @classmethod
+    def from_infrastructure_intent(
+        cls,
+        infrastructure_intent: Any,
+        action: str,
+        component: str,
+        parameters: Dict[str, Any],
+        justification: str,
+        confidence: float = 0.85,
+        risk_score: Optional[float] = None,
+        risk_factors: Optional[Dict[str, float]] = None,
+        cost_projection: Optional[float] = None,
+        policy_violations: Optional[List[str]] = None,
+        recommended_action: Optional[RecommendedAction] = None,
+        source: IntentSource = IntentSource.INFRASTRUCTURE_ANALYSIS,
+        metadata: Optional[Dict[str, Any]] = None,
+        parent_intent_id: Optional[str] = None,
+        execution_constraints: Optional[Dict[str, Any]] = None,
+    ) -> "HealingIntent":
+        """Create from infrastructure module analysis."""
+        infrastructure_intent_id = getattr(infrastructure_intent, 'intent_id', None)
+        if hasattr(infrastructure_intent, 'model_dump'):
+            intent_dict = infrastructure_intent.model_dump()
+        elif hasattr(infrastructure_intent, 'to_dict'):
+            intent_dict = infrastructure_intent.to_dict()
+        else:
+            intent_dict = {"type": str(type(infrastructure_intent))}
+
+        # Build causal chain
+        causal_chain = []
+        if parent_intent_id:
+            causal_chain.append(parent_intent_id)
+        # The new intent's ID will be added after creation
+        return cls(
+            action=action,
+            component=component,
+            parameters=parameters,
+            justification=justification,
+            confidence=confidence,
+            risk_score=risk_score,
+            risk_factors=risk_factors,
+            cost_projection=cost_projection,
+            policy_violations=policy_violations or [],
+            recommended_action=recommended_action,
+            source=source,
+            infrastructure_intent_id=infrastructure_intent_id,
+            infrastructure_intent=intent_dict,
+            metadata=metadata or {},
+            parent_intent_id=parent_intent_id,
+            execution_constraints=execution_constraints or {},
+            causal_chain=tuple(causal_chain),  # will be completed in __post_init__
+        )
+
+    @classmethod
+    def from_analysis(
+        cls,
+        action: str,
+        component: str,
+        parameters: Dict[str, Any],
+        justification: str,
+        confidence: float,
+        confidence_std: float = 0.05,
+        similar_incidents: Optional[List[Dict[str, Any]]] = None,
+        reasoning_chain: Optional[List[Dict[str, Any]]] = None,
+        incident_id: str = "",
+        source: IntentSource = IntentSource.OSS_ANALYSIS,
+        rag_similarity_score: Optional[float] = None,
+        risk_score: Optional[float] = None,
+        cost_projection: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        policy_violations: Optional[List[str]] = None,
+        parent_intent_id: Optional[str] = None,
+        execution_constraints: Optional[Dict[str, Any]] = None,
+    ) -> "HealingIntent":
+        """Primary OSS factory."""
+        if similar_incidents and len(similar_incidents) > cls.MAX_SIMILAR_INCIDENTS:
+            similar_incidents = similar_incidents[:cls.MAX_SIMILAR_INCIDENTS]
+
+        conf_dist = ConfidenceDistribution(confidence, confidence_std)
+        enhanced_confidence = confidence
+        if similar_incidents:
+            similarity_scores = [inc.get("similarity", 0.0) for inc in similar_incidents if "similarity" in inc]
+            if similarity_scores:
+                avg_similarity = sum(similarity_scores) / len(similarity_scores)
+                confidence_boost = min(0.2, avg_similarity * 0.3)
+                enhanced_confidence = min(confidence * (1.0 + confidence_boost), cls.MAX_CONFIDENCE)
+
+        final_rag_score = rag_similarity_score
+        if final_rag_score is None and similar_incidents:
+            top_similarities = [inc.get("similarity", 0.0) for inc in similar_incidents[:3] if "similarity" in inc]
+            if top_similarities:
+                final_rag_score = sum(top_similarities) / len(top_similarities)
+
+        causal_chain = []
+        if parent_intent_id:
+            causal_chain.append(parent_intent_id)
+        # The new intent's ID will be added in __post_init__
+        return cls(
+            action=action,
+            component=component,
+            parameters=parameters,
+            justification=justification,
+            confidence=enhanced_confidence,
+            confidence_distribution=conf_dist.to_dict(),
+            incident_id=incident_id,
+            similar_incidents=similar_incidents,
+            reasoning_chain=reasoning_chain,
+            rag_similarity_score=final_rag_score,
+            source=source,
+            risk_score=risk_score,
+            cost_projection=cost_projection,
+            metadata=metadata or {},
+            policy_violations=policy_violations or [],
+            parent_intent_id=parent_intent_id,
+            execution_constraints=execution_constraints or {},
+            causal_chain=tuple(causal_chain),
+        )
+
+    @classmethod
+    def from_rag_recommendation(
+        cls,
+        action: str,
+        component: str,
+        parameters: Dict[str, Any],
+        rag_similarity_score: float,
+        similar_incidents: List[Dict[str, Any]],
+        justification_template: str = "Based on {count} similar historical incidents with {success_rate:.0%} success rate",
+        success_rate: Optional[float] = None,
+        risk_score: Optional[float] = None,
+        cost_projection: Optional[float] = None,
+    ) -> "HealingIntent":
+        if not similar_incidents:
+            raise ValidationError("RAG recommendation requires similar incidents")
+        if success_rate is None:
+            successful = sum(1 for inc in similar_incidents if inc.get("success", False))
+            success_rate = successful / len(similar_incidents)
+        justification = justification_template.format(
+            count=len(similar_incidents),
+            success_rate=success_rate or 0.0,
+            action=action,
+            component=component,
+        )
+        base_confidence = rag_similarity_score * 0.8
+        if success_rate:
+            base_confidence = base_confidence * (0.7 + success_rate * 0.3)
+        return cls.from_analysis(
+            action=action,
+            component=component,
+            parameters=parameters,
+            justification=justification,
+            confidence=min(base_confidence, 0.95),
+            similar_incidents=similar_incidents,
+            incident_id=similar_incidents[0].get("incident_id", "") if similar_incidents else "",
+            source=IntentSource.RAG_SIMILARITY,
+            rag_similarity_score=rag_similarity_score,
+            risk_score=risk_score,
+            cost_projection=cost_projection,
+        )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HealingIntent":
+        clean = data.copy()
+        # Convert string enums
+        if "source" in clean and isinstance(clean["source"], str):
+            clean["source"] = IntentSource(clean["source"])
+        if "status" in clean and isinstance(clean["status"], str):
+            clean["status"] = IntentStatus(clean["status"])
+        if "recommended_action" in clean and isinstance(clean["recommended_action"], str):
+            try:
+                clean["recommended_action"] = RecommendedAction(clean["recommended_action"])
+            except ValueError:
+                clean["recommended_action"] = None
+        # Remove computed fields
+        for f in ["deterministic_id", "age_seconds", "is_executable", "is_oss_advisory",
+                  "requires_enterprise_upgrade", "version", "confidence_interval",
+                  "is_stale", "expected_value", "schema_hash"]:
+            clean.pop(f, None)
+        return cls(**clean)
+
+    # ------------------------------------------------------------------------
+    # Utility: parameter normalization (order-preserving)
+    # ------------------------------------------------------------------------
+    def _normalize_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = {}
+        for key, value in sorted(params.items()):
+            normalized[key] = self._normalize_value(value)
+        return normalized
+
+    def _normalize_value(self, value: Any) -> Any:
+        if isinstance(value, (int, float, str, bool, type(None))):
+            return value
+        elif isinstance(value, set):
+            return tuple(sorted(self._normalize_value(v) for v in value))
+        elif isinstance(value, (list, tuple)):
+            return tuple(self._normalize_value(v) for v in value)
+        elif isinstance(value, dict):
+            return self._normalize_parameters(value)
+        elif hasattr(value, '__dict__'):
+            return self._normalize_parameters(value.__dict__)
+        else:
+            try:
+                return str(value)
+            except Exception:
+                return f"<unserializable:{type(value).__name__}>"
 
     def is_immutable(self) -> bool:
         try:
@@ -1079,28 +1054,18 @@ class HealingIntentSerializer:
                     }
                 }
             elif version in ("2.0.0", "1.1.0", "1.0.0"):
-                # Fallback to earlier serialization (simplified)
+                # Legacy support
                 data = intent.to_dict(include_oss_context=True)
                 for field in ["metadata", "parent_intent_id", "root_intent_id", "causal_chain",
                               "execution_constraints", "signature", "public_key_fingerprint"]:
                     data.pop(field, None)
                 if version.startswith("1."):
-                    data.pop("confidence_distribution", None)
-                    data.pop("risk_score", None)
-                    data.pop("risk_factors", None)
-                    data.pop("cost_projection", None)
-                    data.pop("cost_confidence_interval", None)
-                    data.pop("recommended_action", None)
-                    data.pop("decision_tree", None)
-                    data.pop("alternative_actions", None)
-                    data.pop("risk_profile", None)
-                    data.pop("human_overrides", None)
-                    data.pop("approvals", None)
-                    data.pop("comments", None)
-                    data.pop("infrastructure_intent_id", None)
-                    data.pop("policy_violations", None)
-                    data.pop("infrastructure_intent", None)
-                    data.pop("confidence_interval", None)
+                    for f in ["confidence_distribution", "risk_score", "risk_factors", "cost_projection",
+                              "cost_confidence_interval", "recommended_action", "decision_tree",
+                              "alternative_actions", "risk_profile", "human_overrides", "approvals",
+                              "comments", "infrastructure_intent_id", "policy_violations",
+                              "infrastructure_intent", "confidence_interval"]:
+                        data.pop(f, None)
                 return {
                     "version": version,
                     "schema_version": "1.1.0" if version == "1.1.0" else "1.0.0",
@@ -1124,7 +1089,7 @@ class HealingIntentSerializer:
             intent_data = data.get("data", data)
             if version in ["2.1.0", "2.0.0", "1.1.0", "1.0.0"]:
                 if version.startswith("1."):
-                    # Add default values for v2 fields
+                    # Add defaults for missing fields
                     intent_data.setdefault("confidence_distribution", None)
                     intent_data.setdefault("risk_score", None)
                     intent_data.setdefault("risk_factors", None)
@@ -1155,13 +1120,11 @@ class HealingIntentSerializer:
 
     @classmethod
     def to_json(cls, intent: HealingIntent, pretty: bool = False) -> str:
-        serialized = cls.serialize(intent)
-        return json.dumps(serialized, indent=2 if pretty else None, default=str)
+        return json.dumps(cls.serialize(intent), indent=2 if pretty else None, default=str)
 
     @classmethod
     def from_json(cls, json_str: str) -> HealingIntent:
-        data = json.loads(json_str)
-        return cls.deserialize(data)
+        return cls.deserialize(json.loads(json_str))
 
     @classmethod
     def to_enterprise_json(cls, intent: HealingIntent) -> str:
@@ -1186,7 +1149,7 @@ class HealingIntentSerializer:
 
 
 # ============================================================================
-# Factory functions for common intents (unchanged except for new parameters)
+# Factory functions (backward compatible)
 # ============================================================================
 def create_infrastructure_healing_intent(
     infrastructure_result: Any,
