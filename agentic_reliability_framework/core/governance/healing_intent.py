@@ -30,7 +30,7 @@ limitations under the License.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import Dict, Any, Optional, List, ClassVar, Tuple, Union
+from typing import Dict, Any, Optional, List, ClassVar, Tuple, Union, Mapping
 from datetime import datetime
 import hashlib
 import json
@@ -38,6 +38,7 @@ import time
 import uuid
 from enum import Enum
 import numpy as np
+from types import MappingProxyType
 
 # Import from local infrastructure modules
 from .intents import InfrastructureIntent
@@ -262,7 +263,11 @@ class HealingIntent:
         """Validate HealingIntent after initialization with OSS boundaries"""
         self._validate_oss_boundaries()
         self._validate_risk_integration()
-        # metadata is free-form; no validation needed beyond being JSON-serializable
+
+        # NEW: Replace metadata dict with immutable proxy
+        # We use object.__setattr__ because the dataclass is frozen
+        if isinstance(self.metadata, dict):
+            object.__setattr__(self, 'metadata', MappingProxyType(self.metadata))
 
     def _validate_oss_boundaries(self) -> None:
         """Validate all fields against OSS limits"""
@@ -300,9 +305,9 @@ class HealingIntent:
         except (TypeError, ValueError) as e:
             errors.append(f"Parameters must be JSON serializable: {e}")
 
-        # Validate metadata is JSON serializable
+        # Validate metadata is JSON serializable (proxy works same as dict for dumps)
         try:
-            json.dumps(self.metadata)
+            json.dumps(dict(self.metadata))
         except (TypeError, ValueError) as e:
             errors.append(f"Metadata must be JSON serializable: {e}")
 
@@ -503,6 +508,10 @@ class HealingIntent:
             data["status"] = self.status.value
         if "recommended_action" in data and isinstance(data["recommended_action"], RecommendedAction):
             data["recommended_action"] = self.recommended_action.value if self.recommended_action else None
+
+        # Convert metadata proxy to dict for serialization
+        if "metadata" in data and isinstance(data["metadata"], Mapping):
+            data["metadata"] = dict(data["metadata"])
 
         # Remove OSS context if not needed
         if not include_oss_context:
@@ -790,7 +799,8 @@ class HealingIntent:
         cost_projection: Optional[float] = None,
         policy_violations: Optional[List[str]] = None,
         recommended_action: Optional[RecommendedAction] = None,
-        source: IntentSource = IntentSource.INFRASTRUCTURE_ANALYSIS
+        source: IntentSource = IntentSource.INFRASTRUCTURE_ANALYSIS,
+        metadata: Optional[Dict[str, Any]] = None,  # NEW: add metadata parameter
     ) -> "HealingIntent":
         """
         Create HealingIntent from infrastructure module analysis.
@@ -822,6 +832,7 @@ class HealingIntent:
             source=source,
             infrastructure_intent_id=infrastructure_intent_id,
             infrastructure_intent=intent_dict,
+            metadata=metadata or {},  # NEW: store metadata
             oss_edition=OSS_EDITION,
             requires_enterprise=True,
             execution_allowed=False
@@ -1059,7 +1070,7 @@ class HealingIntent:
             "oss_edition": self.oss_edition,
             "is_oss_advisory": self.is_oss_advisory,
             "infrastructure_intent": self.infrastructure_intent,
-            "metadata": self.metadata,  # NEW: include metadata in OSS context
+            "metadata": dict(self.metadata),  # Convert proxy to dict for output
         }
 
     def get_execution_summary(self) -> Dict[str, Any]:
@@ -1176,6 +1187,8 @@ class HealingIntentSerializer:
                         "has_probabilistic_confidence": intent.confidence_distribution is not None,
                         "has_risk_assessment": intent.risk_score is not None,
                         "has_cost_projection": intent.cost_projection is not None,
+                        # NEW: add metadata snapshot (keys only to keep size small)
+                        "metadata_keys": list(intent.metadata.keys()) if intent.metadata else [],
                     }
                 }
             elif version == "1.1.0" or version == "1.0.0":
@@ -1351,7 +1364,8 @@ class HealingIntentSerializer:
 # Factory functions for common use cases
 def create_infrastructure_healing_intent(
     infrastructure_result: Any,  # HealingIntent from infrastructure module
-    action_mapping: Optional[Dict[str, str]] = None
+    action_mapping: Optional[Dict[str, str]] = None,
+    metadata: Optional[Dict[str, Any]] = None,  # NEW: pass through metadata
 ) -> HealingIntent:
     """
     Create a healing intent from infrastructure module analysis result.
@@ -1361,6 +1375,7 @@ def create_infrastructure_healing_intent(
     Args:
         infrastructure_result: The HealingIntent from infrastructure.evaluate()
         action_mapping: Optional mapping from infrastructure actions to healing actions
+        metadata: Optional metadata to attach to the intent
 
     Returns:
         HealingIntent ready for the healing system
@@ -1410,10 +1425,11 @@ def create_infrastructure_healing_intent(
         justification=" ".join(justification_parts),
         confidence=getattr(infrastructure_result, 'confidence_score', 0.85),
         risk_score=getattr(infrastructure_result, 'risk_score', None),
-        cost_projection=cost_projection,  # <-- ADDED: pass cost_projection explicitly
+        cost_projection=cost_projection,
         policy_violations=policy_violations,
         recommended_action=recommended_action,
-        source=IntentSource.INFRASTRUCTURE_ANALYSIS
+        source=IntentSource.INFRASTRUCTURE_ANALYSIS,
+        metadata=metadata or {},  # NEW
     ).mark_as_oss_advisory()
 
 
