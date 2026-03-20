@@ -230,6 +230,9 @@ class GovernanceLoop:
         # -------------------------------------------------------------------
         # Build HealingIntent
         # -------------------------------------------------------------------
+        # Convert forecasts to JSON‑serializable dicts using model_dump()
+        forecasts_serializable = [f.model_dump() for f in forecasts] if forecasts else []
+
         healing_intent = HealingIntent.from_analysis(
             action=recommended_action.value,
             component=getattr(intent, 'service_name', getattr(intent, 'component', 'unknown')),
@@ -249,7 +252,7 @@ class GovernanceLoop:
                 "epistemic_breakdown": epistemic_breakdown,
                 "decision_factors": decision_factors,
                 "decision_trace": decision_trace,
-                "forecasts": [f.dict() for f in forecasts],
+                "forecasts": forecasts_serializable,
                 "business_impact": business_impact
             }
         )
