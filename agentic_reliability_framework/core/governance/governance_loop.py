@@ -7,6 +7,8 @@ The resulting HealingIntent includes full traceability:
 - `infrastructure_intent_id` and `infrastructure_intent` link back to the original InfrastructureIntent.
 - `source` is set to `IntentSource.INFRASTRUCTURE_ANALYSIS`.
 - All decision factors, epistemic breakdown, and forecasts are stored in `metadata`.
+- `risk_factors` is populated with additive contributions from each Bayesian component
+  (conjugate prior, hyperprior, HMC), providing full explainability of the risk score.
 """
 
 import logging
@@ -46,6 +48,7 @@ class GovernanceLoop:
     ensuring that:
     - `infrastructure_intent_id` and `infrastructure_intent` capture the original infrastructure analysis.
     - `source` is set to `IntentSource.INFRASTRUCTURE_ANALYSIS`.
+    - `risk_factors` contains additive contributions from each Bayesian risk component.
     - All decision metadata (expected losses, epistemic breakdown, forecasts, etc.) are stored in
       the `metadata` field, making the intent fully auditable.
     """
@@ -84,6 +87,8 @@ class GovernanceLoop:
 
         Returns a HealingIntent with full traceability:
         - The original InfrastructureIntent is embedded via `infrastructure_intent` and `infrastructure_intent_id`.
+        - `risk_factors` is populated with additive contributions from conjugate prior, hyperprior (if enabled),
+          and HMC prediction (if available), using the weights returned by the risk engine.
         - Decision‑critical fields (risk, cost, epistemic uncertainty, business impact) are stored in `metadata`.
         - The intent is automatically marked as OSS advisory (`mark_as_oss_advisory()`).
 
@@ -128,6 +133,28 @@ class GovernanceLoop:
             variance = (alpha * beta) / (total * total * (total + 1))
         else:
             variance = 0.0
+
+        # -------------------------------------------------------------------
+        # Build risk_factors from component contributions
+        # -------------------------------------------------------------------
+        # The risk engine's contributions dictionary contains:
+        #   weights: Dict[str, float] with keys "conjugate", "hyper", "hmc"
+        #   conjugate_mean, hyper_mean, hmc_prediction (the per‑component risks)
+        risk_factors = {}
+        weights = contributions.get("weights", {})
+        if weights.get("conjugate", 0.0) > 0:
+            conj_risk = contributions.get("conjugate_mean", risk_score)
+            risk_factors["conjugate"] = weights["conjugate"] * conj_risk
+        if weights.get("hyper", 0.0) > 0:
+            hyper_risk = contributions.get("hyper_mean", risk_score)
+            risk_factors["hyperprior"] = weights["hyper"] * hyper_risk
+        if weights.get("hmc", 0.0) > 0:
+            hmc_risk = contributions.get("hmc_prediction", risk_score)
+            risk_factors["hmc"] = weights["hmc"] * hmc_risk
+
+        # Sanity check: if no factors were added, fallback to a single factor
+        if not risk_factors:
+            risk_factors["conjugate"] = risk_score
 
         # -------------------------------------------------------------------
         # Predictive foresight
@@ -273,7 +300,7 @@ class GovernanceLoop:
             justification=explanation,
             confidence=1.0 - psi_mean,
             risk_score=risk_score,
-            risk_factors=None,  # not currently extracted from risk engine; optional in contract
+            risk_factors=risk_factors,  # populated with additive contributions
             cost_projection=cost_projection,
             policy_violations=policy_violations,
             recommended_action=recommended_action,
