@@ -1,3 +1,4 @@
+# tests/core/governance/test_governance_loop.py
 """Tests for the canonical governance loop."""
 import pytest
 from unittest.mock import Mock, MagicMock, patch
@@ -12,9 +13,10 @@ from agentic_reliability_framework.core.governance.healing_intent import (
     RecommendedAction,
     IntentStatus,
 )
-from agentic_reliability_framework.core.governance.policies import PolicyEvaluator, allow_all
+from agentic_reliability_framework.core.governance.policies import PolicyEvaluator
 from agentic_reliability_framework.core.governance.cost_estimator import CostEstimator
 from agentic_reliability_framework.core.governance.risk_engine import RiskEngine
+from agentic_reliability_framework.runtime.analytics.predictive import SimplePredictiveEngine, ForecastResult
 
 
 @pytest.fixture
@@ -76,15 +78,15 @@ def test_governance_loop_basic_run(
     assert intent.risk_score == 0.15
     assert intent.cost_projection == 100.0
     assert intent.policy_violations == []
-    # epistemic_uncertainty is not an attribute; confidence_distribution is used instead
-    # So we skip that assertion. The test passes without it.
+    # Check that new fields exist in metadata
+    assert "predictive_risk" in intent.metadata
+    assert "epistemic_breakdown" in intent.metadata
 
 
 def test_governance_loop_policy_violation(
     mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
 ):
     """Test that policy violations lead to DENY."""
-    # Make evaluator return a violation
     mock_policy_evaluator.evaluate.return_value = ["Region not allowed"]
 
     loop = GovernanceLoop(
@@ -95,12 +97,7 @@ def test_governance_loop_policy_violation(
 
     intent = loop.run(sample_intent, context={})
 
-    # In the current loop, policy violations are directly set from the evaluator.
     assert intent.policy_violations == ["Region not allowed"]
-    # Action may be DENY because of policy violations, but the loop may still return approve
-    # if the risk score is low. We'll just check that violations are passed.
-    # Optionally, we could check that action is DENY, but that depends on loop logic.
-    # For now, we only assert the violations.
     assert intent.action == RecommendedAction.DENY.value
 
 
@@ -132,7 +129,6 @@ def test_governance_loop_epistemic_risk(
     """Test that high epistemic risk causes ESCALATE."""
     mock_policy_evaluator.evaluate.return_value = []
 
-    # Patch the hallucination probe
     with patch("agentic_reliability_framework.core.governance.governance_loop.HallucinationRisk") as MockHall:
         instance = MockHall.return_value
         instance.compute_risk.return_value = {"risk_score": 0.85}
@@ -149,10 +145,7 @@ def test_governance_loop_epistemic_risk(
         }
         intent = loop.run(sample_intent, context=context)
 
-    # In the loop, epistemic uncertainty is stored in confidence_distribution,
-    # not as a separate attribute. We'll check that the action is ESCALATE.
     assert intent.action == RecommendedAction.ESCALATE.value
-    # Also check that the hallucination probe was called
     instance.compute_risk.assert_called_once_with(1.0, 0.5, 0.2)
 
 
@@ -173,6 +166,36 @@ def test_governance_loop_ambiguous(
         intent = loop.run(sample_intent, context={})
 
     assert intent.action == RecommendedAction.ESCALATE.value
+
+
+def test_governance_loop_predictive_escalation(
+    mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
+):
+    """Test that high predictive risk causes ESCALATE even with low current risk."""
+    mock_risk_engine.calculate_risk.return_value = (0.1, "Low risk", {"weights": {}})
+    # Create a mock predictive engine that returns high risk forecasts
+    mock_predictive = Mock(spec=SimplePredictiveEngine)
+    mock_predictive.forecast_service_health.return_value = [
+        ForecastResult(
+            metric="latency",
+            predicted_value=500.0,
+            confidence=0.9,
+            trend="increasing",
+            risk_level="critical",
+            time_to_threshold=5.0
+        )
+    ]
+    loop = GovernanceLoop(
+        policy_evaluator=mock_policy_evaluator,
+        cost_estimator=mock_cost_estimator,
+        risk_engine=mock_risk_engine,
+        predictive_engine=mock_predictive,
+        enable_epistemic=False,
+    )
+    intent = loop.run(sample_intent, context={"service_name": "test-svc"})
+    # Predictive risk will be high (0.95) -> combined > DPT_HIGH -> ESCALATE
+    assert intent.action == RecommendedAction.ESCALATE.value
+    assert intent.metadata["predictive_risk"] > 0.8
 
 
 def test_governance_loop_batch(
