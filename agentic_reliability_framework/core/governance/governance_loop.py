@@ -1,251 +1,303 @@
 """
-Predictive analytics engine using timestamp‑based linear regression with risk classification.
+Canonical Governance Loop – orchestrates policy, cost, risk, epistemic, and memory analysis.
+Integrates the ECLIPSE hallucination probe for epistemic uncertainty quantification.
+Uses Bayesian expected loss minimization for final action.
 """
-import numpy as np
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any, Deque
-from collections import deque
 
-from agentic_reliability_framework.core.models.event import ForecastResult, ReliabilityEvent
+import logging
+import numpy as np
+from typing import Optional, Dict, Any, List, Tuple
+
+from agentic_reliability_framework.core.governance.intents import InfrastructureIntent
+from agentic_reliability_framework.core.governance.policies import PolicyEvaluator
+from agentic_reliability_framework.core.governance.cost_estimator import CostEstimator
+from agentic_reliability_framework.core.governance.risk_engine import RiskEngine
+from agentic_reliability_framework.runtime.memory import RAGGraphMemory
+from agentic_reliability_framework.core.governance.healing_intent import (
+    HealingIntent,
+    RecommendedAction,
+    IntentStatus,
+    IntentSource,
+)
+from agentic_reliability_framework.core.research.eclipse_probe import HallucinationRisk
+from agentic_reliability_framework.runtime.analytics.predictive import SimplePredictiveEngine, BusinessImpactCalculator
+from agentic_reliability_framework.core.models.event import ReliabilityEvent
 from agentic_reliability_framework.core.config.constants import (
-    FORECAST_MIN_DATA_POINTS,
-    LATENCY_WARNING, LATENCY_EXTREME, LATENCY_CRITICAL,
-    ERROR_RATE_WARNING, ERROR_RATE_CRITICAL,
-    CPU_WARNING, CPU_CRITICAL, MEMORY_WARNING, MEMORY_CRITICAL,
-    CACHE_EXPIRY_MINUTES, BASE_REVENUE_PER_MINUTE, BASE_USERS
+    EPISTEMIC_ESCALATION_THRESHOLD,
+    COST_FP, COST_IMPACT, COST_FN, COST_OPP, COST_REVIEW, COST_UNCERTAINTY,
+    COST_PREDICTIVE, COST_VARIANCE, USE_EPISTEMIC_GATE,
 )
 
+logger = logging.getLogger(__name__)
 
-class SimplePredictiveEngine:
-    """Simple timestamp‑based linear regression predictive engine with caching."""
+class GovernanceLoop:
+    """
+    Orchestrates the full governance evaluation, integrating policy, cost, risk,
+    epistemic uncertainty (including hallucination detection), predictive foresight,
+    and semantic memory.
+    """
 
-    def __init__(self, history_window: int = 100):
-        self.history_window = history_window
-        self.service_history: Dict[str, Deque] = {}
-        self.prediction_cache: Dict[str, tuple] = {}  # key -> (ForecastResult, timestamp)
-        self.max_cache_age = timedelta(minutes=CACHE_EXPIRY_MINUTES)
+    def __init__(
+        self,
+        policy_evaluator: PolicyEvaluator,
+        cost_estimator: CostEstimator,
+        risk_engine: RiskEngine,
+        memory: Optional[RAGGraphMemory] = None,
+        enable_epistemic: bool = False,
+        hallucination_probe: Optional[HallucinationRisk] = None,
+        dpt_low: float = 0.2,
+        dpt_high: float = 0.8,
+        predictive_engine: Optional[SimplePredictiveEngine] = None,
+        business_calculator: Optional[BusinessImpactCalculator] = None,
+    ):
+        self.policy_evaluator = policy_evaluator
+        self.cost_estimator = cost_estimator
+        self.risk_engine = risk_engine
+        self.memory = memory
+        self.enable_epistemic = enable_epistemic
+        self.hallucination_probe = hallucination_probe
+        self.dpt_low = dpt_low
+        self.dpt_high = dpt_high
+        self.predictive_engine = predictive_engine
+        self.business_calculator = business_calculator or BusinessImpactCalculator()
 
-    def add_telemetry(self, service: str, metrics: Dict[str, float]):
-        """Store a new telemetry point for a service."""
-        if service not in self.service_history:
-            self.service_history[service] = deque(maxlen=self.history_window)
-        point = {
-            'timestamp': datetime.now(timezone.utc),
-            **metrics
-        }
-        # Normalise key names
-        if 'latency_p99' in point:
-            point['latency'] = point.pop('latency_p99')
-        self.service_history[service].append(point)
-        # Invalidate cache for this service
-        keys_to_remove = [k for k in self.prediction_cache if k.startswith(f"{service}_")]
-        for key in keys_to_remove:
-            del self.prediction_cache[key]
+    def run(
+        self,
+        intent: InfrastructureIntent,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> HealingIntent:
+        context = context or {}
+        logger.debug(f"Running governance loop for intent {intent.intent_id if hasattr(intent, 'intent_id') else 'unknown'}")
 
-    def _clean_cache(self):
-        """Remove stale cached forecasts."""
-        now = datetime.now(timezone.utc)
-        expired = [k for k, (_, ts) in self.prediction_cache.items()
-                   if now - ts > self.max_cache_age]
-        for k in expired:
-            del self.prediction_cache[k]
-
-    def _forecast_metric(self, history: List[Dict], metric: str, lookahead_minutes: int,
-                         lower_bound: float = 0, upper_bound: Optional[float] = None,
-                         thresholds: Optional[Dict[str, float]] = None) -> Optional[ForecastResult]:
-        """Generic forecasting for a single metric using timestamp regression."""
-        if len(history) < FORECAST_MIN_DATA_POINTS:
-            return None
-        # Extract timestamps and values
-        timestamps = [p['timestamp'] for p in history if metric in p]
-        values = [p[metric] for p in history if metric in p]
-        if len(values) < FORECAST_MIN_DATA_POINTS:
-            return None
-        # Convert to seconds since first point
-        t0 = timestamps[0]
-        t_sec = [(ts - t0).total_seconds() for ts in timestamps]
-        x = np.array(t_sec)
-        y = np.array(values)
+        # 1. Cost estimation
+        cost_projection = None
         try:
-            slope, intercept = np.polyfit(x, y, 1)
-            # Forecast at current time + lookahead minutes
-            future_seconds = lookahead_minutes * 60
-            predicted = intercept + slope * (x[-1] + future_seconds)
-            if upper_bound is not None:
-                predicted = min(predicted, upper_bound)
-            predicted = max(predicted, lower_bound)
+            cost_projection = self.cost_estimator.estimate_monthly_cost(intent)
+        except Exception as e:
+            logger.warning(f"Cost estimation failed: {e}")
 
-            # Trend
-            if slope > 0.01 / 60:  # per minute slope > 0.01
-                trend = "increasing"
-            elif slope < -0.01 / 60:
-                trend = "decreasing"
-            else:
-                trend = "stable"
+        # 2. Policy evaluation
+        policy_context = {"cost_estimate": cost_projection}
+        policy_violations = self.policy_evaluator.evaluate(intent, policy_context)
 
-            # Risk level based on thresholds
-            if metric == "latency":
-                if predicted >= LATENCY_CRITICAL:
-                    risk = "critical"
-                elif predicted >= LATENCY_EXTREME:
-                    risk = "high"
-                elif predicted >= LATENCY_WARNING:
-                    risk = "medium"
-                else:
-                    risk = "low"
-            elif metric == "error_rate":
-                if predicted >= ERROR_RATE_CRITICAL:
-                    risk = "critical"
-                elif predicted >= ERROR_RATE_WARNING:
-                    risk = "high"
-                else:
-                    risk = "low"
-            else:  # cpu_util, memory_util
-                if predicted >= (CPU_CRITICAL if metric == "cpu_util" else MEMORY_CRITICAL):
-                    risk = "critical"
-                elif predicted >= (CPU_WARNING if metric == "cpu_util" else MEMORY_WARNING):
-                    risk = "high"
-                else:
-                    risk = "low"
+        # 3. Risk calculation (posterior mean and variance)
+        risk_score, explanation, contributions = self.risk_engine.calculate_risk(
+            intent=intent,
+            cost_estimate=cost_projection,
+            policy_violations=policy_violations,
+        )
 
-            # Confidence based on R²
-            residuals = y - (intercept + slope * x)
-            r2 = 1 - (np.var(residuals) / np.var(y)) if len(y) > 1 else 0.5
-            confidence = max(0.0, min(1.0, r2))
+        # Extract Beta parameters from contributions (if available)
+        alpha = contributions.get("conjugate_alpha", 1.0)
+        beta = contributions.get("conjugate_beta", 10.0)
+        total = alpha + beta
+        if total > 0:
+            variance = (alpha * beta) / (total * total * (total + 1))
+        else:
+            variance = 0.0
 
-            # Estimate time to threshold (in minutes)
-            time_to_threshold = None
-            if thresholds and "threshold" in thresholds:
-                threshold_val = thresholds["threshold"]
-                if slope > 0:
-                    last_val = y[-1]
-                    if last_val < threshold_val:
-                        seconds_needed = (threshold_val - last_val) / max(slope, 1e-6)
-                        time_to_threshold = seconds_needed / 60.0
+        # -------------------------------------------------------------------
+        # Predictive foresight
+        # -------------------------------------------------------------------
+        predictive_risk = 0.0
+        forecasts = []
+        service = getattr(intent, "service_name", None) or context.get("service_name")
+        if self.predictive_engine and service:
+            forecasts = self.predictive_engine.forecast_service_health(service)
+            if forecasts:
+                confidences = np.array([f.confidence for f in forecasts])
+                risk_numeric = np.array([{"low":0.1, "medium":0.4, "high":0.7, "critical":0.95}[f.risk_level] for f in forecasts])
+                exp_c = np.exp(confidences)
+                w = exp_c / np.sum(exp_c)
+                weighted_risk = np.sum(w * risk_numeric)
+                avg_confidence = np.mean(confidences)
+                predictive_risk = weighted_risk * avg_confidence
 
-            return ForecastResult(
-                metric=metric,
-                predicted_value=float(predicted),
-                confidence=float(confidence),
-                trend=trend,
-                risk_level=risk,
-                time_to_threshold=time_to_threshold
+        # -------------------------------------------------------------------
+        # Business impact
+        # -------------------------------------------------------------------
+        event = None
+        if service:
+            event = ReliabilityEvent(
+                component=service,
+                latency_p99=context.get("latency_p99"),
+                error_rate=context.get("error_rate"),
+                throughput=context.get("throughput", 0),
             )
-        except Exception:
-            return None
+        business_impact = self.business_calculator.calculate_impact(event) if event else {"revenue_loss_estimate": 0, "affected_users_estimate": 0, "severity_level": "LOW", "throughput_reduction_pct": 0}
+        b_mean = business_impact["revenue_loss_estimate"]
 
-    def forecast_service_health(self, service: str) -> List[ForecastResult]:
-        """Return forecasts for all available metrics of a service."""
-        self._clean_cache()
-        if service not in self.service_history:
-            return []
-        history = list(self.service_history[service])
-        forecasts = []
-        for metric in ["latency", "error_rate", "cpu_util", "memory_util"]:
-            key = f"{service}_{metric}"
-            if key in self.prediction_cache:
-                f, _ = self.prediction_cache[key]
-                forecasts.append(f)
+        # -------------------------------------------------------------------
+        # Epistemic uncertainty (product of complements)
+        # -------------------------------------------------------------------
+        psi_mean = 0.0
+        hallucination_risk = 0.0
+        forecast_uncertainty = 0.0
+        sparsity = 1.0
+        if self.enable_epistemic:
+            # Compute components
+            if self.hallucination_probe and "query" in context and "evidence" in context:
+                entropy = context.get("entropy")
+                evidence_lift = context.get("evidence_lift")
+                contradiction = context.get("contradiction")
+                if entropy is not None and evidence_lift is not None and contradiction is not None:
+                    result = self.hallucination_probe.compute_risk(entropy, evidence_lift, contradiction)
+                    hallucination_risk = result["risk_score"]
+
+            forecast_uncertainty = 1.0 - np.mean([f.confidence for f in forecasts]) if forecasts else 0.0
+
+            if self.predictive_engine and service:
+                history = self.predictive_engine.service_history.get(service, [])
+                sparsity = np.exp(-0.05 * len(history))
             else:
-                if metric == "latency":
-                    f = self._forecast_metric(history, "latency", 10, lower_bound=0,
-                                               thresholds={"threshold": LATENCY_CRITICAL})
-                elif metric == "error_rate":
-                    f = self._forecast_metric(history, "error_rate", 10, lower_bound=0, upper_bound=1,
-                                               thresholds={"threshold": ERROR_RATE_CRITICAL})
-                elif metric == "cpu_util":
-                    f = self._forecast_metric(history, "cpu_util", 10, lower_bound=0, upper_bound=1,
-                                               thresholds={"threshold": CPU_CRITICAL})
-                elif metric == "memory_util":
-                    f = self._forecast_metric(history, "memory_util", 10, lower_bound=0, upper_bound=1,
-                                               thresholds={"threshold": MEMORY_CRITICAL})
-                if f:
-                    self.prediction_cache[key] = (f, datetime.now(timezone.utc))
-                    forecasts.append(f)
-        return forecasts
+                sparsity = 1.0
 
-    def get_predictive_insights(self, service: str) -> Dict[str, Any]:
-        """Return structured insights including warnings and recommendations."""
-        forecasts = self.forecast_service_health(service)
-        warnings = []
-        recommendations = []
-        critical_count = 0
-        for f in forecasts:
-            if f.risk_level == "critical":
-                critical_count += 1
-                warnings.append(f"{f.metric} is forecast to reach critical levels.")
-                recommendations.append(f"Immediate action required on {f.metric}.")
-            elif f.risk_level == "high":
-                warnings.append(f"{f.metric} is forecast to be high.")
-                recommendations.append(f"Consider scaling or reviewing {f.metric}.")
-        return {
-            "service": service,
-            "forecasts": forecasts,
-            "warnings": warnings,
-            "recommendations": recommendations,
-            "critical_risk_count": critical_count,
-            "forecast_timestamp": datetime.now(timezone.utc).isoformat()
+            uncertainty_components = [hallucination_risk, forecast_uncertainty, sparsity]
+            psi_mean = 1.0 - np.prod([1.0 - min(1.0, max(0.0, u)) for u in uncertainty_components])
+
+        # -------------------------------------------------------------------
+        # Expected losses (computed unconditionally)
+        # -------------------------------------------------------------------
+        v_mean = context.get("estimated_value", 0.0)  # optional
+
+        L_approve = (COST_FP * risk_score +
+                     COST_IMPACT * b_mean +
+                     COST_PREDICTIVE * predictive_risk +
+                     COST_VARIANCE * variance)
+
+        L_deny = COST_FN * (1 - risk_score) + COST_OPP * v_mean
+
+        L_escalate = COST_REVIEW + COST_UNCERTAINTY * psi_mean
+
+        expected_losses = {
+            RecommendedAction.APPROVE: L_approve,
+            RecommendedAction.DENY: L_deny,
+            RecommendedAction.ESCALATE: L_escalate,
         }
 
-    # Backward‑compatible methods (wrappers around _forecast_metric)
-    def _forecast_latency(self, history: List[Dict], lookahead: int) -> Optional[ForecastResult]:
-        return self._forecast_metric(history, "latency", lookahead, lower_bound=0)
-
-    def _forecast_error_rate(self, history: List[Dict], lookahead: int) -> Optional[ForecastResult]:
-        return self._forecast_metric(history, "error_rate", lookahead, lower_bound=0, upper_bound=1)
-
-    def _forecast_resources(self, history: List[Dict], lookahead: int) -> List[ForecastResult]:
-        forecasts = []
-        for metric in ["cpu_util", "memory_util"]:
-            f = self._forecast_metric(history, metric, lookahead, lower_bound=0, upper_bound=1)
-            if f:
-                forecasts.append(f)
-        return forecasts
-
-
-class BusinessImpactCalculator:
-    """Calculate business impact from a ReliabilityEvent."""
-
-    def __init__(self, revenue_per_request: float = 0.01):
-        self.revenue_per_request = revenue_per_request
-
-    def calculate_impact(self, event: ReliabilityEvent, duration_minutes: int = 5) -> Dict:
-        latency = event.latency_p99 if event.latency_p99 is not None else 0.0
-        error_rate = event.error_rate  # keep None for fallback
-        cpu = event.cpu_util if event.cpu_util is not None else 0.5
-
-        # Handle throughput: use BASE_USERS if missing or zero
-        throughput = event.throughput
-        if throughput is None or throughput == 0:
-            throughput = BASE_USERS
-
-        # NEW: Fallback for missing error_rate
-        if error_rate is None:
-            revenue_loss = BASE_REVENUE_PER_MINUTE * (duration_minutes / 60)
-            affected_users = 0
-            # No latency factor, no throughput multiplier
+        # -------------------------------------------------------------------
+        # Decision
+        # -------------------------------------------------------------------
+        if policy_violations:
+            recommended_action = RecommendedAction.DENY
         else:
-            # Impact estimation: revenue loss = throughput * revenue_per_request * error_rate * duration
-            revenue_loss = throughput * self.revenue_per_request * error_rate * duration_minutes
-            # Also include latency impact: higher latency reduces effective throughput
-            latency_factor = 1 + (latency / 1000)  # normalized
-            revenue_loss *= latency_factor
-            affected_users = throughput * error_rate
+            if USE_EPISTEMIC_GATE and psi_mean > EPISTEMIC_ESCALATION_THRESHOLD:
+                recommended_action = RecommendedAction.ESCALATE
+            else:
+                recommended_action = min(expected_losses, key=expected_losses.get)
 
-        # Severity classification uses effective error_rate (0 if None)
-        effective_error = error_rate if error_rate is not None else 0.0
-        if latency >= LATENCY_CRITICAL or effective_error >= ERROR_RATE_CRITICAL or cpu >= CPU_CRITICAL:
-            severity = "CRITICAL"
-        elif latency >= LATENCY_EXTREME or effective_error >= ERROR_RATE_WARNING or cpu >= CPU_WARNING:
-            severity = "HIGH"
-        elif latency >= LATENCY_WARNING or effective_error >= 0.02 or cpu >= 0.7:
-            severity = "MEDIUM"
-        else:
-            severity = "LOW"
+        # -------------------------------------------------------------------
+        # Semantic memory retrieval
+        # -------------------------------------------------------------------
+        similar_incidents = self._retrieve_similar_incidents(intent, context)
 
-        return {
-            "revenue_loss_estimate": revenue_loss,
-            "affected_users_estimate": affected_users,
-            "severity_level": severity,
-            "throughput_reduction_pct": effective_error * 100
+        # -------------------------------------------------------------------
+        # Build reasoning chain and decision trace
+        # -------------------------------------------------------------------
+        reasoning_chain = [
+            f"Policy evaluation: {policy_violations if policy_violations else 'no violations'}",
+            f"Risk score (E[θ]): {risk_score:.3f}, Variance: {variance:.4f}",
+            f"Predictive risk: {predictive_risk:.3f}",
+            f"Epistemic uncertainty: {psi_mean:.3f}",
+            f"Business impact (revenue loss): ${b_mean:.2f}",
+            f"Expected losses: Approve={L_approve:.2f}, Deny={L_deny:.2f}, Escalate={L_escalate:.2f}",
+            f"Decision: {recommended_action.value}"
+        ]
+
+        epistemic_breakdown = {
+            "hallucination": hallucination_risk,
+            "forecast_uncertainty": forecast_uncertainty,
+            "data_sparsity": sparsity,
+            "policy_ambiguity": 0.0,
         }
+
+        decision_factors = {
+            "risk": risk_score,
+            "predictive": predictive_risk,
+            "uncertainty": psi_mean,
+            "impact": b_mean,
+            "variance": variance,
+        }
+
+        decision_trace = {
+            "expected_losses": {a.value: expected_losses[a] for a in expected_losses},
+            "selected_action": recommended_action.value,
+            "posterior_mean": risk_score,
+            "posterior_variance": variance,
+        }
+
+        # -------------------------------------------------------------------
+        # Build HealingIntent with JSON‑serializable metadata
+        # -------------------------------------------------------------------
+        # Convert forecasts to JSON‑serializable dicts using model_dump(mode='json')
+        forecasts_serializable = [f.model_dump(mode='json') for f in forecasts] if forecasts else []
+
+        healing_intent = HealingIntent.from_infrastructure_intent(
+            infrastructure_intent=intent,
+            action=recommended_action.value,
+            component=getattr(intent, 'service_name', getattr(intent, 'component', 'unknown')),
+            parameters={},
+            justification=explanation,
+            confidence=1.0 - psi_mean,
+            risk_score=risk_score,
+            risk_factors=None,  # not currently extracted from risk engine; optional in contract
+            cost_projection=cost_projection,
+            policy_violations=policy_violations,
+            recommended_action=recommended_action,
+            source=IntentSource.INFRASTRUCTURE_ANALYSIS,
+            metadata={
+                "predictive_risk": predictive_risk,
+                "epistemic_breakdown": epistemic_breakdown,
+                "decision_factors": decision_factors,
+                "decision_trace": decision_trace,
+                "forecasts": forecasts_serializable,
+                "business_impact": business_impact
+            }
+        )
+        healing_intent = healing_intent.mark_as_oss_advisory()
+        return healing_intent
+
+    def _retrieve_similar_incidents(
+        self,
+        intent: InfrastructureIntent,
+        context: Dict[str, Any],
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        if not self.memory or not self.memory.has_historical_data():
+            return []
+        try:
+            class DummyEvent:
+                component = getattr(intent, 'service_name', 'unknown')
+            event = DummyEvent()
+            analysis = {}
+            nodes = self.memory.find_similar(event, analysis, k=k)
+            similar = []
+            for node in nodes:
+                # Convert timestamp to ISO string for JSON serialization
+                timestamp = node.timestamp
+                if hasattr(timestamp, 'isoformat'):
+                    timestamp_str = timestamp.isoformat()
+                else:
+                    timestamp_str = str(timestamp)
+                sim_dict = {
+                    "incident_id": node.incident_id,
+                    "component": node.component,
+                    "severity": node.severity,
+                    "timestamp": timestamp_str,
+                    "metrics": node.metrics,
+                    "similarity_score": node.metadata.get("similarity_score", 0.0),
+                }
+                similar.append(sim_dict)
+            return similar
+        except Exception as e:
+            logger.warning(f"Failed to retrieve similar incidents: {e}")
+            return []
+
+    def run_batch(
+        self,
+        intents: List[InfrastructureIntent],
+        contexts: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[HealingIntent]:
+        if contexts is None:
+            contexts = [{}] * len(intents)
+        return [self.run(intent, ctx) for intent, ctx in zip(intents, contexts)]
