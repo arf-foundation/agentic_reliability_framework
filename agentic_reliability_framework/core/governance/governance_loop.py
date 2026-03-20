@@ -201,7 +201,7 @@ class GovernanceLoop:
         }
 
         # -------------------------------------------------------------------
-        # Build HealingIntent
+        # Build HealingIntent (now with policy_violations)
         # -------------------------------------------------------------------
         healing_intent = HealingIntent.from_analysis(
             action=recommended_action.value,
@@ -216,6 +216,7 @@ class GovernanceLoop:
             rag_similarity_score=None,
             risk_score=risk_score,
             cost_projection=cost_projection,
+            policy_violations=policy_violations,  # <-- ADDED
             metadata={
                 "predictive_risk": predictive_risk,
                 "epistemic_breakdown": epistemic_breakdown,
