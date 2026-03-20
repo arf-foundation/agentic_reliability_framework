@@ -1,4 +1,3 @@
-# tests/core/governance/test_governance_loop.py
 """Tests for the canonical governance loop."""
 import pytest
 from unittest.mock import Mock, patch
