@@ -212,24 +212,30 @@ class BusinessImpactCalculator:
 
     def calculate_impact(self, event: ReliabilityEvent, duration_minutes: int = 5) -> Dict:
         latency = event.latency_p99 if event.latency_p99 is not None else 0.0
-        error_rate = event.error_rate if event.error_rate is not None else 0.0
+        error_rate = event.error_rate  # keep None for fallback
         cpu = event.cpu_util if event.cpu_util is not None else 0.5
         throughput = event.throughput if event.throughput is not None else BASE_USERS  # fallback
 
-        # Impact estimation: revenue loss = throughput * revenue_per_request * error_rate * duration
-        revenue_loss = throughput * self.revenue_per_request * error_rate * duration_minutes
-        # Also include latency impact: higher latency reduces effective throughput
-        latency_factor = 1 + (latency / 1000)  # normalized
-        revenue_loss *= latency_factor
+        # NEW: Fallback for missing error_rate
+        if error_rate is None:
+            revenue_loss = BASE_REVENUE_PER_MINUTE * (duration_minutes / 60)
+            affected_users = 0
+            # No latency factor, no throughput multiplier
+        else:
+            # Impact estimation: revenue loss = throughput * revenue_per_request * error_rate * duration
+            revenue_loss = throughput * self.revenue_per_request * error_rate * duration_minutes
+            # Also include latency impact: higher latency reduces effective throughput
+            latency_factor = 1 + (latency / 1000)  # normalized
+            revenue_loss *= latency_factor
+            affected_users = throughput * error_rate
 
-        affected_users = throughput * error_rate
-
-        # Severity classification
-        if latency >= LATENCY_CRITICAL or error_rate >= ERROR_RATE_CRITICAL or cpu >= CPU_CRITICAL:
+        # Severity classification uses effective error_rate (0 if None)
+        effective_error = error_rate if error_rate is not None else 0.0
+        if latency >= LATENCY_CRITICAL or effective_error >= ERROR_RATE_CRITICAL or cpu >= CPU_CRITICAL:
             severity = "CRITICAL"
-        elif latency >= LATENCY_EXTREME or error_rate >= ERROR_RATE_WARNING or cpu >= CPU_WARNING:
+        elif latency >= LATENCY_EXTREME or effective_error >= ERROR_RATE_WARNING or cpu >= CPU_WARNING:
             severity = "HIGH"
-        elif latency >= LATENCY_WARNING or error_rate >= 0.02 or cpu >= 0.7:
+        elif latency >= LATENCY_WARNING or effective_error >= 0.02 or cpu >= 0.7:
             severity = "MEDIUM"
         else:
             severity = "LOW"
@@ -238,5 +244,5 @@ class BusinessImpactCalculator:
             "revenue_loss_estimate": revenue_loss,
             "affected_users_estimate": affected_users,
             "severity_level": severity,
-            "throughput_reduction_pct": error_rate * 100
+            "throughput_reduction_pct": effective_error * 100
         }
