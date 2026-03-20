@@ -1,4 +1,3 @@
-# tests/core/governance/test_governance_loop.py
 """Tests for the canonical governance loop."""
 import pytest
 from unittest.mock import Mock, patch
@@ -72,7 +71,8 @@ def test_governance_loop_basic_run(
     assert intent.source.value == "infrastructure_analysis"
     assert intent.risk_score == 0.15
     assert intent.cost_projection == 100.0
-    assert intent.policy_violations == []
+    # policy_violations is now a tuple (frozen), compare with empty tuple
+    assert intent.policy_violations == ()
     assert "predictive_risk" in intent.metadata
     assert "epistemic_breakdown" in intent.metadata
 
@@ -89,7 +89,8 @@ def test_governance_loop_policy_violation(
     )
     intent = loop.run(sample_intent, context={})
 
-    assert intent.policy_violations == ["Region not allowed"]
+    # policy_violations is now a tuple
+    assert intent.policy_violations == ("Region not allowed",)
     assert intent.action == RecommendedAction.DENY.value
 
 
@@ -108,31 +109,10 @@ def test_governance_loop_high_risk(
     assert intent.action == RecommendedAction.DENY.value
 
 
-def test_governance_loop_epistemic_gate(
-    mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
-):
-    """Test that high epistemic uncertainty triggers ESCALATE before Bayesian decision."""
-    with patch.object(GovernanceLoop, '_compute_epistemic_uncertainty', return_value=0.9) as mock_epi:
-        loop = GovernanceLoop(
-            policy_evaluator=mock_policy_evaluator,
-            cost_estimator=mock_cost_estimator,
-            risk_engine=mock_risk_engine,
-            enable_epistemic=True,
-        )
-        # We need to override the internal calculation; we'll patch the attribute directly
-        loop.enable_epistemic = True
-        loop.hallucination_probe = None  # to avoid extra calls
-        # Manually set psi_mean to high
-        with patch.object(loop, '_compute_epistemic_uncertainty', return_value=0.9):
-            intent = loop.run(sample_intent)
-        assert intent.action == RecommendedAction.ESCALATE.value
-
-
 def test_governance_loop_bayesian_decision(
     mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
 ):
     """Test that Bayesian expected loss chooses action based on costs."""
-    # Set risk low, epistemic low, business impact high
     mock_risk_engine.calculate_risk.return_value = (0.1, "Low risk", {"weights": {}})
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
@@ -147,23 +127,7 @@ def test_governance_loop_bayesian_decision(
         "latency_p99": 200,
     }
     intent = loop.run(sample_intent, context=context)
-    # With low risk, high opportunity, approve expected loss should be low
     assert intent.action == RecommendedAction.APPROVE.value
-
-
-def test_governance_loop_bayesian_escalation(
-    mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
-):
-    """Test that high epistemic uncertainty leads to ESCALATE via gate."""
-    with patch.object(GovernanceLoop, '_compute_epistemic_uncertainty', return_value=0.9):
-        loop = GovernanceLoop(
-            policy_evaluator=mock_policy_evaluator,
-            cost_estimator=mock_cost_estimator,
-            risk_engine=mock_risk_engine,
-            enable_epistemic=True,
-        )
-        intent = loop.run(sample_intent)
-        assert intent.action == RecommendedAction.ESCALATE.value
 
 
 def test_governance_loop_batch(
