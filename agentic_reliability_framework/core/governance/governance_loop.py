@@ -25,7 +25,8 @@ from agentic_reliability_framework.runtime.analytics.predictive import SimplePre
 from agentic_reliability_framework.core.models.event import ReliabilityEvent
 from agentic_reliability_framework.core.config.constants import (
     EPISTEMIC_ESCALATION_THRESHOLD,
-    COST_FP, COST_IMPACT, COST_FN, COST_OPP, COST_REVIEW, COST_UNCERTAINTY
+    COST_FP, COST_IMPACT, COST_FN, COST_OPP, COST_REVIEW, COST_UNCERTAINTY,
+    COST_PREDICTIVE, COST_VARIANCE, USE_EPISTEMIC_GATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,12 +81,22 @@ class GovernanceLoop:
         policy_context = {"cost_estimate": cost_projection}
         policy_violations = self.policy_evaluator.evaluate(intent, policy_context)
 
-        # 3. Risk calculation (posterior mean)
+        # 3. Risk calculation (posterior mean and variance)
         risk_score, explanation, contributions = self.risk_engine.calculate_risk(
             intent=intent,
             cost_estimate=cost_projection,
             policy_violations=policy_violations,
         )
+
+        # Extract Beta parameters from contributions (if available)
+        alpha = contributions.get("conjugate_alpha", 1.0)
+        beta = contributions.get("conjugate_beta", 10.0)
+        # Compute posterior variance: αβ / ((α+β)^2 (α+β+1))
+        total = alpha + beta
+        if total > 0:
+            variance = (alpha * beta) / (total * total * (total + 1))
+        else:
+            variance = 0.0
 
         # -------------------------------------------------------------------
         # Predictive foresight
@@ -125,9 +136,11 @@ class GovernanceLoop:
         # Epistemic uncertainty (product of complements)
         # -------------------------------------------------------------------
         psi_mean = 0.0
+        hallucination_risk = 0.0
+        forecast_uncertainty = 0.0
+        sparsity = 1.0
         if self.enable_epistemic:
             # Compute components
-            hallucination_risk = 0.0
             if self.hallucination_probe and "query" in context and "evidence" in context:
                 entropy = context.get("entropy")
                 evidence_lift = context.get("evidence_lift")
@@ -138,16 +151,13 @@ class GovernanceLoop:
 
             forecast_uncertainty = 1.0 - np.mean([f.confidence for f in forecasts]) if forecasts else 0.0
 
-            # Data sparsity: exponential decay
             if self.predictive_engine and service:
                 history = self.predictive_engine.service_history.get(service, [])
-                sparsity = np.exp(-0.05 * len(history))  # k=0.05 gives smooth recovery
+                sparsity = np.exp(-0.05 * len(history))
             else:
                 sparsity = 1.0
 
-            # Combine using product of complements (independent failure model)
             uncertainty_components = [hallucination_risk, forecast_uncertainty, sparsity]
-            # cap at 1
             psi_mean = 1.0 - np.prod([1.0 - min(1.0, max(0.0, u)) for u in uncertainty_components])
 
         # -------------------------------------------------------------------
@@ -156,17 +166,28 @@ class GovernanceLoop:
         if policy_violations:
             recommended_action = RecommendedAction.DENY
         else:
-            # Epistemic gate
-            if psi_mean > EPISTEMIC_ESCALATION_THRESHOLD:
+            # Compute expected losses using the full posterior
+            v_mean = context.get("estimated_value", 0.0)  # optional
+
+            L_approve = (COST_FP * risk_score +
+                         COST_IMPACT * b_mean +
+                         COST_PREDICTIVE * predictive_risk +
+                         COST_VARIANCE * variance)
+
+            L_deny = COST_FN * (1 - risk_score) + COST_OPP * v_mean
+
+            L_escalate = COST_REVIEW + COST_UNCERTAINTY * psi_mean
+
+            expected_losses = {
+                RecommendedAction.APPROVE: L_approve,
+                RecommendedAction.DENY: L_deny,
+                RecommendedAction.ESCALATE: L_escalate,
+            }
+
+            # Decision: epistemic gate optional, otherwise pure expected loss minimization
+            if USE_EPISTEMIC_GATE and psi_mean > EPISTEMIC_ESCALATION_THRESHOLD:
                 recommended_action = RecommendedAction.ESCALATE
             else:
-                # Bayesian expected loss minimization
-                v_mean = context.get("estimated_value", 0.0)  # optional
-                expected_losses = {
-                    RecommendedAction.APPROVE: COST_FP * risk_score + COST_IMPACT * b_mean,
-                    RecommendedAction.DENY: COST_FN * (1 - risk_score) + COST_OPP * v_mean,
-                    RecommendedAction.ESCALATE: COST_REVIEW + COST_UNCERTAINTY * psi_mean,
-                }
                 recommended_action = min(expected_losses, key=expected_losses.get)
 
         # -------------------------------------------------------------------
@@ -175,21 +196,22 @@ class GovernanceLoop:
         similar_incidents = self._retrieve_similar_incidents(intent, context)
 
         # -------------------------------------------------------------------
-        # Build reasoning chain
+        # Build reasoning chain and decision trace
         # -------------------------------------------------------------------
         reasoning_chain = [
             f"Policy evaluation: {policy_violations if policy_violations else 'no violations'}",
-            f"Risk score: {risk_score:.2f}",
-            f"Predictive risk: {predictive_risk:.2f}",
-            f"Epistemic uncertainty: {psi_mean:.2f}",
+            f"Risk score (E[θ]): {risk_score:.3f}, Variance: {variance:.4f}",
+            f"Predictive risk: {predictive_risk:.3f}",
+            f"Epistemic uncertainty: {psi_mean:.3f}",
             f"Business impact (revenue loss): ${b_mean:.2f}",
+            f"Expected losses: Approve={L_approve:.2f}, Deny={L_deny:.2f}, Escalate={L_escalate:.2f}",
             f"Decision: {recommended_action.value}"
         ]
 
         epistemic_breakdown = {
-            "hallucination": hallucination_risk if 'hallucination_risk' in locals() else 0.0,
-            "forecast_uncertainty": forecast_uncertainty if 'forecast_uncertainty' in locals() else 0.0,
-            "data_sparsity": sparsity if 'sparsity' in locals() else 1.0,
+            "hallucination": hallucination_risk,
+            "forecast_uncertainty": forecast_uncertainty,
+            "data_sparsity": sparsity,
             "policy_ambiguity": 0.0,
         }
 
@@ -198,10 +220,18 @@ class GovernanceLoop:
             "predictive": predictive_risk,
             "uncertainty": psi_mean,
             "impact": b_mean,
+            "variance": variance,
+        }
+
+        decision_trace = {
+            "expected_losses": {a.value: expected_losses[a] for a in expected_losses},
+            "selected_action": recommended_action.value,
+            "posterior_mean": risk_score,
+            "posterior_variance": variance,
         }
 
         # -------------------------------------------------------------------
-        # Build HealingIntent (now with policy_violations)
+        # Build HealingIntent
         # -------------------------------------------------------------------
         healing_intent = HealingIntent.from_analysis(
             action=recommended_action.value,
@@ -216,11 +246,12 @@ class GovernanceLoop:
             rag_similarity_score=None,
             risk_score=risk_score,
             cost_projection=cost_projection,
-            policy_violations=policy_violations,  # <-- ADDED
+            policy_violations=policy_violations,
             metadata={
                 "predictive_risk": predictive_risk,
                 "epistemic_breakdown": epistemic_breakdown,
                 "decision_factors": decision_factors,
+                "decision_trace": decision_trace,
                 "forecasts": [f.dict() for f in forecasts],
                 "business_impact": business_impact
             }
