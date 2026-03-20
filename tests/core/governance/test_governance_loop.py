@@ -17,7 +17,7 @@ from agentic_reliability_framework.core.governance.policies import PolicyEvaluat
 from agentic_reliability_framework.core.governance.cost_estimator import CostEstimator
 from agentic_reliability_framework.core.governance.risk_engine import RiskEngine
 from agentic_reliability_framework.runtime.analytics.predictive import SimplePredictiveEngine, ForecastResult
-from agentic_reliability_framework.core.config.constants import EPISTEMIC_ESCALATION_THRESHOLD
+from agentic_reliability_framework.core.research.eclipse_probe import HallucinationRisk
 
 
 @pytest.fixture
@@ -40,8 +40,7 @@ def mock_risk_engine():
     engine.calculate_risk.return_value = (
         0.15,
         "Explanation",
-        {"conjugate": 0.15, "hmc": 0.0, "hyper": 0.0, "weights": {"conjugate": 1.0},
-         "conjugate_alpha": 1.5, "conjugate_beta": 8.0}  # include alpha/beta
+        {"conjugate_alpha": 1.5, "conjugate_beta": 8.0, "weights": {"conjugate": 1.0}}
     )
     return engine
 
@@ -76,7 +75,7 @@ def test_governance_loop_basic_run(
     assert intent.policy_violations == ()
     assert "predictive_risk" in intent.metadata
     assert "epistemic_breakdown" in intent.metadata
-    assert "decision_trace" in intent.metadata  # NEW: check for decision_trace
+    assert "decision_trace" in intent.metadata  # NEW
 
 
 def test_governance_loop_policy_violation(
@@ -114,15 +113,41 @@ def test_governance_loop_epistemic_gate(
     mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
 ):
     """Test that high epistemic uncertainty triggers ESCALATE via gate."""
+    # Create a mock hallucination probe that returns high risk
+    mock_hall = Mock(spec=HallucinationRisk)
+    mock_hall.compute_risk.return_value = {"risk_score": 0.9}
+
+    # Create a mock predictive engine that returns low confidence forecasts
+    mock_predictive = Mock(spec=SimplePredictiveEngine)
+    mock_predictive.forecast_service_health.return_value = [
+        ForecastResult(
+            metric="latency",
+            predicted_value=100,
+            confidence=0.1,
+            trend="stable",
+            risk_level="low",
+        )
+    ]
+    mock_predictive.service_history = {}  # empty history -> sparsity high
+
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
         cost_estimator=mock_cost_estimator,
         risk_engine=mock_risk_engine,
         enable_epistemic=True,
+        hallucination_probe=mock_hall,
+        predictive_engine=mock_predictive,
     )
-    # Force psi_mean to high
-    with patch.object(loop, '_compute_epistemic_uncertainty', return_value=0.9):
-        intent = loop.run(sample_intent)
+    context = {
+        "query": "test",
+        "evidence": "test",
+        "entropy": 1.0,
+        "evidence_lift": 1.0,
+        "contradiction": 1.0,
+        "service_name": "test-service",
+    }
+    intent = loop.run(sample_intent, context=context)
+    # Epistemic uncertainty should be high, triggering ESCALATE
     assert intent.action == RecommendedAction.ESCALATE.value
 
 
@@ -133,7 +158,7 @@ def test_governance_loop_bayesian_decision(
     # Set risk low, epistemic low, business impact high
     mock_risk_engine.calculate_risk.return_value = (
         0.1, "Low risk",
-        {"conjugate_alpha": 1.5, "conjugate_beta": 12.0}  # moderate variance
+        {"conjugate_alpha": 1.5, "conjugate_beta": 12.0}
     )
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
@@ -152,20 +177,32 @@ def test_governance_loop_bayesian_decision(
     assert intent.action == RecommendedAction.APPROVE.value
 
 
-def test_governance_loop_bayesian_escalation(
+def test_governance_loop_variance_escalation(
     mock_policy_evaluator, mock_cost_estimator, mock_risk_engine, sample_intent
 ):
-    """Test that high epistemic uncertainty leads to ESCALATE via gate."""
+    """Test that high variance (uncertainty) leads to ESCALATE even without epistemic gate."""
+    # Set risk moderate but variance high (Beta(1,1) has variance 1/12 ≈ 0.0833)
+    mock_risk_engine.calculate_risk.return_value = (
+        0.5, "High uncertainty risk",
+        {"conjugate_alpha": 1.0, "conjugate_beta": 1.0}
+    )
     loop = GovernanceLoop(
         policy_evaluator=mock_policy_evaluator,
         cost_estimator=mock_cost_estimator,
         risk_engine=mock_risk_engine,
-        enable_epistemic=True,
+        enable_epistemic=False,
     )
-    # Force psi_mean high
-    with patch.object(loop, '_compute_epistemic_uncertainty', return_value=0.9):
-        intent = loop.run(sample_intent)
-        assert intent.action == RecommendedAction.ESCALATE.value
+    context = {
+        "estimated_value": 0.0,  # no opportunity
+        "throughput": 10000,
+        "error_rate": 0.1,
+        "latency_p99": 200,
+    }
+    intent = loop.run(sample_intent, context=context)
+    # With high variance, approve loss should be high due to COST_VARIANCE,
+    # and with no opportunity, escalate may be chosen
+    # Check that the decision is either ESCALATE or DENY (not APPROVE)
+    assert intent.action in [RecommendedAction.ESCALATE.value, RecommendedAction.DENY.value]
 
 
 def test_governance_loop_batch(
