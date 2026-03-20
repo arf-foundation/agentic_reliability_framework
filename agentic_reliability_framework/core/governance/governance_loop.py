@@ -91,7 +91,6 @@ class GovernanceLoop:
         # Extract Beta parameters from contributions (if available)
         alpha = contributions.get("conjugate_alpha", 1.0)
         beta = contributions.get("conjugate_beta", 10.0)
-        # Compute posterior variance: αβ / ((α+β)^2 (α+β+1))
         total = alpha + beta
         if total > 0:
             variance = (alpha * beta) / (total * total * (total + 1))
@@ -107,14 +106,11 @@ class GovernanceLoop:
         if self.predictive_engine and service:
             forecasts = self.predictive_engine.forecast_service_health(service)
             if forecasts:
-                # Softmax‑weighted aggregation with uncertainty penalty
                 confidences = np.array([f.confidence for f in forecasts])
                 risk_numeric = np.array([{"low":0.1, "medium":0.4, "high":0.7, "critical":0.95}[f.risk_level] for f in forecasts])
-                # Softmax weights based on confidence
                 exp_c = np.exp(confidences)
                 w = exp_c / np.sum(exp_c)
                 weighted_risk = np.sum(w * risk_numeric)
-                # Uncertainty penalty
                 avg_confidence = np.mean(confidences)
                 predictive_risk = weighted_risk * avg_confidence
 
@@ -161,30 +157,31 @@ class GovernanceLoop:
             psi_mean = 1.0 - np.prod([1.0 - min(1.0, max(0.0, u)) for u in uncertainty_components])
 
         # -------------------------------------------------------------------
-        # Hard policy gate
+        # Expected losses (computed unconditionally)
+        # -------------------------------------------------------------------
+        v_mean = context.get("estimated_value", 0.0)  # optional
+
+        L_approve = (COST_FP * risk_score +
+                     COST_IMPACT * b_mean +
+                     COST_PREDICTIVE * predictive_risk +
+                     COST_VARIANCE * variance)
+
+        L_deny = COST_FN * (1 - risk_score) + COST_OPP * v_mean
+
+        L_escalate = COST_REVIEW + COST_UNCERTAINTY * psi_mean
+
+        expected_losses = {
+            RecommendedAction.APPROVE: L_approve,
+            RecommendedAction.DENY: L_deny,
+            RecommendedAction.ESCALATE: L_escalate,
+        }
+
+        # -------------------------------------------------------------------
+        # Decision
         # -------------------------------------------------------------------
         if policy_violations:
             recommended_action = RecommendedAction.DENY
         else:
-            # Compute expected losses using the full posterior
-            v_mean = context.get("estimated_value", 0.0)  # optional
-
-            L_approve = (COST_FP * risk_score +
-                         COST_IMPACT * b_mean +
-                         COST_PREDICTIVE * predictive_risk +
-                         COST_VARIANCE * variance)
-
-            L_deny = COST_FN * (1 - risk_score) + COST_OPP * v_mean
-
-            L_escalate = COST_REVIEW + COST_UNCERTAINTY * psi_mean
-
-            expected_losses = {
-                RecommendedAction.APPROVE: L_approve,
-                RecommendedAction.DENY: L_deny,
-                RecommendedAction.ESCALATE: L_escalate,
-            }
-
-            # Decision: epistemic gate optional, otherwise pure expected loss minimization
             if USE_EPISTEMIC_GATE and psi_mean > EPISTEMIC_ESCALATION_THRESHOLD:
                 recommended_action = RecommendedAction.ESCALATE
             else:
