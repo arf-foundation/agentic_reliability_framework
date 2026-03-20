@@ -24,7 +24,6 @@ You may obtain a copy of the License at
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
- source /opt/conda/bin/activate /workspaces/agentic-reliability-framework/venv
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
@@ -248,6 +247,9 @@ class HealingIntent:
     policy_violations: List[str] = field(default_factory=list)  # From policy engine
     infrastructure_intent: Optional[Dict[str, Any]] = None  # Original infrastructure intent
 
+    # NEW: Extended metadata for governance loop outputs
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
     # Class constants for validation
     MIN_CONFIDENCE: ClassVar[float] = 0.0
     MAX_CONFIDENCE: ClassVar[float] = 1.0
@@ -260,6 +262,7 @@ class HealingIntent:
         """Validate HealingIntent after initialization with OSS boundaries"""
         self._validate_oss_boundaries()
         self._validate_risk_integration()
+        # metadata is free-form; no validation needed beyond being JSON-serializable
 
     def _validate_oss_boundaries(self) -> None:
         """Validate all fields against OSS limits"""
@@ -296,6 +299,12 @@ class HealingIntent:
             json.dumps(self.parameters)
         except (TypeError, ValueError) as e:
             errors.append(f"Parameters must be JSON serializable: {e}")
+
+        # Validate metadata is JSON serializable
+        try:
+            json.dumps(self.metadata)
+        except (TypeError, ValueError) as e:
+            errors.append(f"Metadata must be JSON serializable: {e}")
 
         # Validate similar incidents
         if self.similar_incidents:
@@ -574,6 +583,9 @@ class HealingIntent:
             policy_violations=self.policy_violations,
             infrastructure_intent=self.infrastructure_intent,
 
+            # NEW: copy metadata
+            metadata=self.metadata,
+
             # Updated execution fields
             status=status,
             execution_id=execution_id,
@@ -664,7 +676,8 @@ class HealingIntent:
             execution_allowed=self.execution_allowed,
             infrastructure_intent_id=self.infrastructure_intent_id,
             policy_violations=self.policy_violations,
-            infrastructure_intent=self.infrastructure_intent
+            infrastructure_intent=self.infrastructure_intent,
+            metadata=self.metadata  # NEW: copy metadata
         )
 
     def mark_as_sent_to_enterprise(self) -> "HealingIntent":
@@ -711,7 +724,8 @@ class HealingIntent:
             execution_allowed=self.execution_allowed,
             infrastructure_intent_id=self.infrastructure_intent_id,
             policy_violations=self.policy_violations,
-            infrastructure_intent=self.infrastructure_intent
+            infrastructure_intent=self.infrastructure_intent,
+            metadata=self.metadata  # NEW: copy metadata
         )
 
     def mark_as_oss_advisory(self) -> "HealingIntent":
@@ -758,7 +772,8 @@ class HealingIntent:
             execution_allowed=False,  # Force no execution in OSS
             infrastructure_intent_id=self.infrastructure_intent_id,
             policy_violations=self.policy_violations,
-            infrastructure_intent=self.infrastructure_intent
+            infrastructure_intent=self.infrastructure_intent,
+            metadata=self.metadata  # NEW: copy metadata
         )
 
     @classmethod
@@ -828,6 +843,9 @@ class HealingIntent:
         rag_similarity_score: Optional[float] = None,
         risk_score: Optional[float] = None,
         cost_projection: Optional[float] = None,
+        # NEW: metadata and policy_violations parameters
+        metadata: Optional[Dict[str, Any]] = None,
+        policy_violations: Optional[List[str]] = None,
     ) -> "HealingIntent":
         """
         Factory method for creating HealingIntent from OSS analysis
@@ -882,6 +900,9 @@ class HealingIntent:
             source=source,
             risk_score=risk_score,
             cost_projection=cost_projection,
+            # NEW: store metadata and policy_violations
+            metadata=metadata or {},
+            policy_violations=policy_violations or [],
             oss_edition=OSS_EDITION,
             requires_enterprise=True,
             execution_allowed=False,
@@ -1038,6 +1059,7 @@ class HealingIntent:
             "oss_edition": self.oss_edition,
             "is_oss_advisory": self.is_oss_advisory,
             "infrastructure_intent": self.infrastructure_intent,
+            "metadata": self.metadata,  # NEW: include metadata in OSS context
         }
 
     def get_execution_summary(self) -> Dict[str, Any]:
@@ -1176,7 +1198,8 @@ class HealingIntentSerializer:
                 data.pop("infrastructure_intent_id", None)
                 data.pop("policy_violations", None)
                 data.pop("infrastructure_intent", None)
-                data.pop("confidence_interval", None)  # <-- ADDED: remove computed confidence_interval
+                data.pop("confidence_interval", None)  # computed field
+                data.pop("metadata", None)             # NEW: remove metadata for v1
 
                 # Ensure status is compatible
                 if data.get("status") in [
@@ -1243,6 +1266,7 @@ class HealingIntentSerializer:
                     intent_data.setdefault("infrastructure_intent_id", None)
                     intent_data.setdefault("policy_violations", [])
                     intent_data.setdefault("infrastructure_intent", None)
+                    intent_data.setdefault("metadata", {})  # NEW: default metadata
 
                 return HealingIntent.from_dict(intent_data)
             else:
