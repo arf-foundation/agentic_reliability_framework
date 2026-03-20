@@ -207,11 +207,11 @@ via the **Contact** section below.
 If you use ARF in research, please cite:
 
 ```bibtex
-@misc{arf2025,
+@misc{arf2026,
   title={Agentic Reliability Framework (ARF)},
   author={Juan, Petter and contributors},
   year={2026},
-  howpublished={\url{https://github.com/petter2025us/agentic-reliability-framework}}
+  howpublished={\url{https://github.com/arf-foundation/agentic_reliability_framework}}
 }
 ```
 
