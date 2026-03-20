@@ -30,7 +30,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields
 from typing import Dict, Any, Optional, List, ClassVar, Tuple, Union, Mapping
 from datetime import datetime
 import hashlib
@@ -176,7 +176,7 @@ class ConfidenceDistribution:
 
 
 # ============================================================================
-# Deep Freeze Utility
+# Deep Freeze / Unfreeze Utilities
 # ============================================================================
 def _deep_freeze(obj: Any) -> Any:
     """Recursively freeze dictionaries, lists, and sets into immutable structures."""
@@ -277,9 +277,10 @@ class HealingIntent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     # === CAUSAL LINKAGE ===
+    # Stores IDs of ancestor intents (excluding self). The root is the first element.
+    ancestor_chain: Tuple[str, ...] = field(default_factory=tuple)
     parent_intent_id: Optional[str] = None
     root_intent_id: Optional[str] = None
-    causal_chain: Tuple[str, ...] = field(default_factory=tuple)
 
     # === EXECUTION CONSTRAINTS (deep frozen) ===
     execution_constraints: Dict[str, Any] = field(default_factory=dict)
@@ -298,19 +299,24 @@ class HealingIntent:
     MAX_INTENT_AGE_SECONDS: ClassVar[int] = 3600
 
     def __post_init__(self) -> None:
-        """Validate and deeply freeze mutable fields."""
+        """Validate and deeply freeze all mutable fields."""
         self._validate_oss_boundaries()
         self._validate_risk_integration()
         self._validate_causal_chain()
         self._validate_execution_constraints()
 
-        # Deep freeze
-        object.__setattr__(self, 'metadata', _deep_freeze(self.metadata))
-        object.__setattr__(self, 'execution_constraints', _deep_freeze(self.execution_constraints))
-        object.__setattr__(self, 'causal_chain', tuple(self.causal_chain))
-        if self.root_intent_id is None:
-            object.__setattr__(self, 'root_intent_id', self.intent_id)
+        # Deep freeze every field that is a dict, list, or set.
+        for f in fields(self):
+            val = getattr(self, f.name)
+            if isinstance(val, (dict, list, set, tuple)):
+                # Only freeze if not already frozen (skip tuple because it's immutable)
+                if not isinstance(val, (tuple, MappingProxyType)):
+                    frozen = _deep_freeze(val)
+                    object.__setattr__(self, f.name, frozen)
 
+    # ------------------------------------------------------------------------
+    # Validation helpers
+    # ------------------------------------------------------------------------
     def _validate_oss_boundaries(self) -> None:
         errors = []
         if not (self.MIN_CONFIDENCE <= self.confidence <= self.MAX_CONFIDENCE):
@@ -360,10 +366,13 @@ class HealingIntent:
                 raise ValidationError(f"Invalid confidence interval: [{low}, {high}]")
 
     def _validate_causal_chain(self) -> None:
-        if self.parent_intent_id and self.parent_intent_id not in self.causal_chain:
-            raise ValidationError("parent_intent_id must be present in causal_chain")
-        if self.root_intent_id and self.root_intent_id != (self.causal_chain[0] if self.causal_chain else self.intent_id):
-            raise ValidationError("root_intent_id must match first element of causal_chain")
+        # root_intent_id must match first element of ancestor_chain (if chain non‑empty)
+        if self.ancestor_chain:
+            if self.root_intent_id != self.ancestor_chain[0]:
+                raise ValidationError("root_intent_id must match first element of ancestor_chain")
+        if self.parent_intent_id:
+            if self.parent_intent_id not in self.ancestor_chain:
+                raise ValidationError("parent_intent_id must be present in ancestor_chain")
 
     def _validate_execution_constraints(self) -> None:
         if "max_retries" in self.execution_constraints:
@@ -398,28 +407,29 @@ class HealingIntent:
         return self.age_seconds > self.MAX_INTENT_AGE_SECONDS
 
     @property
-    def schema_hash(self) -> str:
+    def instance_hash(self) -> str:
         """
-        Hash of the intent's core data (excluding ephemeral and computed fields)
-        for contract verification.
+        Cryptographic hash of the intent's core data (including instance‑specific fields).
+        This can be used as a unique fingerprint for this specific intent.
         """
         data = self._get_canonical_data()
         json_str = json.dumps(data, sort_keys=True, default=str)
         return hashlib.sha256(json_str.encode()).hexdigest()
 
     def _get_canonical_data(self) -> Dict[str, Any]:
-        """Return a plain dict of core fields without computed or ephemeral values."""
-        return {
+        """Return a plain dict of all fields (except computed ones) for hashing/signing."""
+        # Convert all fields to plain Python types (unfreeze)
+        data = {
             "action": self.action,
             "component": self.component,
             "parameters": _unfreeze(self.parameters),
             "justification": self.justification,
             "confidence": self.confidence,
-            "confidence_distribution": self.confidence_distribution,
+            "confidence_distribution": _unfreeze(self.confidence_distribution),
             "incident_id": self.incident_id,
             "detected_at": self.detected_at,
             "risk_score": self.risk_score,
-            "risk_factors": self.risk_factors,
+            "risk_factors": _unfreeze(self.risk_factors),
             "cost_projection": self.cost_projection,
             "cost_confidence_interval": self.cost_confidence_interval,
             "recommended_action": self.recommended_action.value if self.recommended_action else None,
@@ -442,9 +452,11 @@ class HealingIntent:
             "metadata": _unfreeze(self.metadata),
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
-            "causal_chain": list(self.causal_chain),
+            "ancestor_chain": list(self.ancestor_chain),
             "execution_constraints": _unfreeze(self.execution_constraints),
+            # Exclude execution_result and enterprise_metadata because they can be set later
         }
+        return data
 
     @property
     def expected_value(self) -> float:
@@ -476,30 +488,32 @@ class HealingIntent:
                     self.confidence_distribution.get("p95", self.confidence))
         return None
 
+    def is_immutable(self) -> bool:
+        # Frozen dataclass with deep‑frozen nested structures is truly immutable.
+        return True
+
     # ------------------------------------------------------------------------
-    # Cloning and building
+    # Cloning and building (immutable updates)
     # ------------------------------------------------------------------------
     def _clone(self, **updates) -> "HealingIntent":
         """Create a new intent by applying updates to the current one."""
         plain = self._to_plain_dict()
         plain.update(updates)
-        # Ensure proper types for frozen fields
         return HealingIntent(**plain)
 
     def _to_plain_dict(self) -> Dict[str, Any]:
-        """Convert the intent to a plain dict suitable for constructor."""
-        # Start with all fields as they are (they are already frozen, but we need to unwrap proxies)
+        """Convert the intent to a plain dict suitable for constructor (unfreezes)."""
         data = {
             "action": self.action,
             "component": self.component,
             "parameters": _unfreeze(self.parameters),
             "justification": self.justification,
             "confidence": self.confidence,
-            "confidence_distribution": self.confidence_distribution,
+            "confidence_distribution": _unfreeze(self.confidence_distribution),
             "incident_id": self.incident_id,
             "detected_at": self.detected_at,
             "risk_score": self.risk_score,
-            "risk_factors": self.risk_factors,
+            "risk_factors": _unfreeze(self.risk_factors),
             "cost_projection": self.cost_projection,
             "cost_confidence_interval": self.cost_confidence_interval,
             "recommended_action": self.recommended_action,
@@ -530,7 +544,7 @@ class HealingIntent:
             "metadata": _unfreeze(self.metadata),
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
-            "causal_chain": list(self.causal_chain),
+            "ancestor_chain": list(self.ancestor_chain),
             "execution_constraints": _unfreeze(self.execution_constraints),
             "signature": self.signature,
             "public_key_fingerprint": self.public_key_fingerprint,
@@ -665,7 +679,7 @@ class HealingIntent:
             "is_stale": self.is_stale,
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
-            "causal_chain": list(self.causal_chain),
+            "ancestor_chain": list(self.ancestor_chain),
             "execution_constraints": _unfreeze(self.execution_constraints),
             "signature": self.signature,
             "public_key_fingerprint": self.public_key_fingerprint,
@@ -675,7 +689,7 @@ class HealingIntent:
                 "has_reasoning_chain": self.reasoning_chain is not None,
                 "source": self.source.value,
                 "is_oss_advisory": self.is_oss_advisory,
-                "risk_factors": self.risk_factors,
+                "risk_factors": _unfreeze(self.risk_factors),
                 "policy_violations_count": len(self.policy_violations),
                 "confidence_basis": self._get_confidence_basis(),
                 "learning_applied": False,
@@ -700,7 +714,7 @@ class HealingIntent:
         return "policy_only"
 
     def to_dict(self, include_oss_context: bool = False) -> Dict[str, Any]:
-        """Full dictionary representation."""
+        """Full dictionary representation (for serialization)."""
         data = self._to_plain_dict()
         # Convert enums to strings
         if "source" in data and isinstance(data["source"], IntentSource):
@@ -728,7 +742,7 @@ class HealingIntent:
         data["confidence_interval"] = self.confidence_interval
         data["is_stale"] = self.is_stale
         data["expected_value"] = self.expected_value
-        data["schema_hash"] = self.schema_hash
+        data["instance_hash"] = self.instance_hash
         return data
 
     def get_oss_context(self) -> Dict[str, Any]:
@@ -747,7 +761,7 @@ class HealingIntent:
             "metadata": _unfreeze(self.metadata),
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
-            "causal_chain": list(self.causal_chain),
+            "ancestor_chain": list(self.ancestor_chain),
         }
 
     def get_execution_summary(self) -> Dict[str, Any]:
@@ -772,7 +786,7 @@ class HealingIntent:
             "is_stale": self.is_stale,
             "parent_intent_id": self.parent_intent_id,
             "root_intent_id": self.root_intent_id,
-            "causal_chain_length": len(self.causal_chain),
+            "ancestor_chain_length": len(self.ancestor_chain),
             "has_signature": self.signature is not None,
         }
         if self.executed_at:
@@ -812,6 +826,7 @@ class HealingIntent:
         source: IntentSource = IntentSource.INFRASTRUCTURE_ANALYSIS,
         metadata: Optional[Dict[str, Any]] = None,
         parent_intent_id: Optional[str] = None,
+        ancestor_chain: Optional[List[str]] = None,
         execution_constraints: Optional[Dict[str, Any]] = None,
     ) -> "HealingIntent":
         """Create from infrastructure module analysis."""
@@ -823,11 +838,14 @@ class HealingIntent:
         else:
             intent_dict = {"type": str(type(infrastructure_intent))}
 
-        # Build causal chain
-        causal_chain = []
-        if parent_intent_id:
-            causal_chain.append(parent_intent_id)
-        # The new intent's ID will be added after creation
+        # Build ancestor chain and root ID
+        if ancestor_chain is None:
+            if parent_intent_id:
+                ancestor_chain = [parent_intent_id]
+            else:
+                ancestor_chain = []
+        root_intent_id = ancestor_chain[0] if ancestor_chain else None
+
         return cls(
             action=action,
             component=component,
@@ -844,8 +862,9 @@ class HealingIntent:
             infrastructure_intent=intent_dict,
             metadata=metadata or {},
             parent_intent_id=parent_intent_id,
+            root_intent_id=root_intent_id,
+            ancestor_chain=tuple(ancestor_chain),
             execution_constraints=execution_constraints or {},
-            causal_chain=tuple(causal_chain),  # will be completed in __post_init__
         )
 
     @classmethod
@@ -867,6 +886,7 @@ class HealingIntent:
         metadata: Optional[Dict[str, Any]] = None,
         policy_violations: Optional[List[str]] = None,
         parent_intent_id: Optional[str] = None,
+        ancestor_chain: Optional[List[str]] = None,
         execution_constraints: Optional[Dict[str, Any]] = None,
     ) -> "HealingIntent":
         """Primary OSS factory."""
@@ -888,10 +908,14 @@ class HealingIntent:
             if top_similarities:
                 final_rag_score = sum(top_similarities) / len(top_similarities)
 
-        causal_chain = []
-        if parent_intent_id:
-            causal_chain.append(parent_intent_id)
-        # The new intent's ID will be added in __post_init__
+        # Build ancestor chain and root ID
+        if ancestor_chain is None:
+            if parent_intent_id:
+                ancestor_chain = [parent_intent_id]
+            else:
+                ancestor_chain = []
+        root_intent_id = ancestor_chain[0] if ancestor_chain else None
+
         return cls(
             action=action,
             component=component,
@@ -909,8 +933,9 @@ class HealingIntent:
             metadata=metadata or {},
             policy_violations=policy_violations or [],
             parent_intent_id=parent_intent_id,
+            root_intent_id=root_intent_id,
+            ancestor_chain=tuple(ancestor_chain),
             execution_constraints=execution_constraints or {},
-            causal_chain=tuple(causal_chain),
         )
 
     @classmethod
@@ -970,12 +995,12 @@ class HealingIntent:
         # Remove computed fields
         for f in ["deterministic_id", "age_seconds", "is_executable", "is_oss_advisory",
                   "requires_enterprise_upgrade", "version", "confidence_interval",
-                  "is_stale", "expected_value", "schema_hash"]:
+                  "is_stale", "expected_value", "instance_hash"]:
             clean.pop(f, None)
         return cls(**clean)
 
     # ------------------------------------------------------------------------
-    # Utility: parameter normalization (order-preserving)
+    # Utility: parameter normalization (order‑preserving)
     # ------------------------------------------------------------------------
     def _normalize_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
         normalized = {}
@@ -999,13 +1024,6 @@ class HealingIntent:
                 return str(value)
             except Exception:
                 return f"<unserializable:{type(value).__name__}>"
-
-    def is_immutable(self) -> bool:
-        try:
-            object.__setattr__(self, '_test_immutable', True)
-            return False
-        except Exception:
-            return True
 
     def __repr__(self) -> str:
         risk_str = f"{self.risk_score:.2f}" if self.risk_score is not None else "N/A"
@@ -1048,7 +1066,7 @@ class HealingIntentSerializer:
                         "has_cost_projection": intent.cost_projection is not None,
                         "metadata_keys": list(intent.metadata.keys()) if intent.metadata else [],
                         "has_signature": intent.signature is not None,
-                        "causal_chain_length": len(intent.causal_chain),
+                        "ancestor_chain_length": len(intent.ancestor_chain),
                         "expected_value": intent.expected_value,
                         "is_stale": intent.is_stale,
                     }
@@ -1056,7 +1074,7 @@ class HealingIntentSerializer:
             elif version in ("2.0.0", "1.1.0", "1.0.0"):
                 # Legacy support
                 data = intent.to_dict(include_oss_context=True)
-                for field in ["metadata", "parent_intent_id", "root_intent_id", "causal_chain",
+                for field in ["metadata", "parent_intent_id", "root_intent_id", "ancestor_chain",
                               "execution_constraints", "signature", "public_key_fingerprint"]:
                     data.pop(field, None)
                 if version.startswith("1."):
@@ -1108,7 +1126,7 @@ class HealingIntentSerializer:
                     intent_data.setdefault("metadata", {})
                     intent_data.setdefault("parent_intent_id", None)
                     intent_data.setdefault("root_intent_id", None)
-                    intent_data.setdefault("causal_chain", [])
+                    intent_data.setdefault("ancestor_chain", [])
                     intent_data.setdefault("execution_constraints", {})
                     intent_data.setdefault("signature", None)
                     intent_data.setdefault("public_key_fingerprint", None)
@@ -1156,6 +1174,7 @@ def create_infrastructure_healing_intent(
     action_mapping: Optional[Dict[str, str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     parent_intent_id: Optional[str] = None,
+    ancestor_chain: Optional[List[str]] = None,
     execution_constraints: Optional[Dict[str, Any]] = None,
 ) -> HealingIntent:
     if action_mapping is None:
@@ -1188,6 +1207,7 @@ def create_infrastructure_healing_intent(
         source=IntentSource.INFRASTRUCTURE_ANALYSIS,
         metadata=metadata or {},
         parent_intent_id=parent_intent_id,
+        ancestor_chain=ancestor_chain,
         execution_constraints=execution_constraints or {},
     ).mark_as_oss_advisory()
 
@@ -1202,6 +1222,7 @@ def create_rollback_intent(
     risk_score: Optional[float] = None,
     cost_projection: Optional[float] = None,
     parent_intent_id: Optional[str] = None,
+    ancestor_chain: Optional[List[str]] = None,
 ) -> HealingIntent:
     if not justification:
         justification = f"Rollback {component} to {revision} revision"
@@ -1217,6 +1238,7 @@ def create_rollback_intent(
         risk_score=risk_score,
         cost_projection=cost_projection,
         parent_intent_id=parent_intent_id,
+        ancestor_chain=ancestor_chain,
     ).mark_as_oss_advisory()
 
 
@@ -1230,6 +1252,7 @@ def create_restart_intent(
     risk_score: Optional[float] = None,
     cost_projection: Optional[float] = None,
     parent_intent_id: Optional[str] = None,
+    ancestor_chain: Optional[List[str]] = None,
 ) -> HealingIntent:
     parameters = {}
     if container_id:
@@ -1248,6 +1271,7 @@ def create_restart_intent(
         risk_score=risk_score,
         cost_projection=cost_projection,
         parent_intent_id=parent_intent_id,
+        ancestor_chain=ancestor_chain,
     ).mark_as_oss_advisory()
 
 
@@ -1261,6 +1285,7 @@ def create_scale_out_intent(
     risk_score: Optional[float] = None,
     cost_projection: Optional[float] = None,
     parent_intent_id: Optional[str] = None,
+    ancestor_chain: Optional[List[str]] = None,
 ) -> HealingIntent:
     if not justification:
         justification = f"Scale out {component} by factor {scale_factor}"
@@ -1276,6 +1301,7 @@ def create_scale_out_intent(
         risk_score=risk_score,
         cost_projection=cost_projection,
         parent_intent_id=parent_intent_id,
+        ancestor_chain=ancestor_chain,
     ).mark_as_oss_advisory()
 
 
@@ -1289,7 +1315,16 @@ def create_oss_advisory_intent(
     risk_score: Optional[float] = None,
     cost_projection: Optional[float] = None,
     parent_intent_id: Optional[str] = None,
+    ancestor_chain: Optional[List[str]] = None,
 ) -> HealingIntent:
+    """
+    Create a generic OSS advisory-only intent.
+
+    If ancestor_chain is omitted but parent_intent_id is provided,
+    ancestor_chain will be set to [parent_intent_id] to maintain validation.
+    """
+    if ancestor_chain is None:
+        ancestor_chain = [parent_intent_id] if parent_intent_id else []
     return HealingIntent(
         action=action,
         component=component,
@@ -1300,6 +1335,8 @@ def create_oss_advisory_intent(
         risk_score=risk_score,
         cost_projection=cost_projection,
         parent_intent_id=parent_intent_id,
+        ancestor_chain=tuple(ancestor_chain),
+        root_intent_id=ancestor_chain[0] if ancestor_chain else None,
         oss_edition=OSS_EDITION,
         requires_enterprise=True,
         execution_allowed=False,
