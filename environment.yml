@@ -10,7 +10,8 @@ dependencies:
   - pytest
   - pytest-asyncio
   - pytest-cov
-  - pytest-timeout          
+  - pytest-timeout
   - pyyaml
+  - cryptography                 
   - pip:
-    - -e .                  # install the package in editable mode
+    - -e .                        # install the package in editable mode
