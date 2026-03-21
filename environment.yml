@@ -10,7 +10,7 @@ dependencies:
   - pytest
   - pytest-asyncio
   - pytest-cov
+  - pytest-timeout          
   - pyyaml
-  # Additional dependencies for your infrastructure module
   - pip:
-    - -e .  # install the package in editable mode
+    - -e .                  # install the package in editable mode
