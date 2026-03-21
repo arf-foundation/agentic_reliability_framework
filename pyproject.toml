@@ -1,22 +1,3 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "agentic-reliability-framework"
-version = "4.2.0+oss"
-description = "Agentic Reliability Framework - OSS Edition"
-readme = "README.md"
-authors = [
-    {name = "Juan Petter", email = "petter2025us@outlook.com"}
-]
-license = {text = "Apache-2.0"}
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
-]
-requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "numpy",
@@ -27,15 +8,6 @@ dependencies = [
     "anthropic>=0.8.1",
     "pandas>=2.0.0",
     "scikit-learn>=1.0.0",
-    "faiss-cpu>=1.7.0",               # Added for memory
-    "sentence-transformers>=2.2.0",    # Added for embeddings
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
 ]
-
-[project.urls]
-Homepage = "https://github.com/petter2025us/agentic-reliability-framework"
-
-[tool.setuptools.packages.find]
-include = ["agentic_reliability_framework*"]
-
-[project.scripts]
-arf = "agentic_reliability_framework.cli.main:main"
