@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # silence Node 20 warning (optional)
     defaults:
       run:
         shell: bash -l {0}
@@ -21,7 +23,7 @@ jobs:
         with:
           environment-file: environment.yml
           activate-environment: arf
-          auto-activate-base: false
+          auto-activate: true          # fixes the deprecation warning
 
       - name: Conda info
         run: conda info
