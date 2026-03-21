@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash -l {0}          # ensures Conda environment is active
+        shell: bash -l {0}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,11 +25,6 @@ jobs:
 
       - name: Conda info
         run: conda info
-
-      - name: Install dependencies (if any extra)
-        run: |
-          conda install -c conda-forge pytest-timeout  # fallback, but already in env.yml
-          pip install -e .                             # ensure package is installed
 
       - name: Run stress tests
         run: |
