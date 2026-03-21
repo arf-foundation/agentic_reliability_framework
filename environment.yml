@@ -5,13 +5,13 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - numpy
-  - pydantic>=2.0
-  - pytest
-  - pytest-asyncio
-  - pytest-cov
-  - pytest-timeout
-  - pyyaml
-  - cryptography                 
+  - numpy                      # runtime dependency (also in pyproject.toml)
+  - pydantic>=2.0              # runtime dependency
+  - pyyaml                     # runtime dependency
+  - cryptography               # needed by healing_intent.py
+  - pytest                     # test runner
+  - pytest-asyncio             # async test support
+  - pytest-cov                 # coverage reporting
+  - pytest-timeout             # enables --timeout flag
   - pip:
-    - -e .                        # install the package in editable mode
+    - -e .                     # install the package in editable mode (reads pyproject.toml)
